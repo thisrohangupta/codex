@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '../../components/Toast';
 import { mockPlan, mockPolicy, runMockPlan } from '../../lib/mock';
+import { useMockMode } from '../../lib/useMock';
 
 type Env = { id: string; name: string; provider: string; target: string; region?: string };
 type Plan = { id: string; summary: string; steps: any[] };
@@ -22,7 +23,7 @@ export default function DeploymentsPage() {
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [loading, setLoading] = useState(false);
   const { push } = useToast();
-  const MOCK = true;
+  const [MOCK] = useMockMode(true);
 
   useEffect(() => {
     fetch('/api/environments').then((r) => r.json()).then((d) => {
@@ -131,7 +132,7 @@ export default function DeploymentsPage() {
             <pre style={{ whiteSpace: 'pre-wrap' }}>{valuesYaml}</pre>
           </div>
           <div className="glass card">
-            <h3>Plan</h3>
+            <h3>Plan <span className="badge ok">Mock</span></h3>
             {!plan && <p className="muted">No plan yet.</p>}
             {plan && (
               <div>

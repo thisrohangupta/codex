@@ -3,6 +3,7 @@ import Link from 'next/link';
 import Providers from '../components/Providers';
 import { ToastProvider } from '../components/Toast';
 import AuthButtons from '../components/AuthButtons';
+import MockToggle from '../components/MockToggle';
 const AUTH_DISABLED = process.env.AUTH_DISABLED === 'true';
 
 export const metadata = {
@@ -25,11 +26,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Link href="/deployments">Deployments</Link>
                 <Link href="/environments">Environments</Link>
               </nav>
-              {!AUTH_DISABLED && (
-                <div style={{ marginLeft: 'auto' }}>
-                  <AuthButtons />
-                </div>
-              )}
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <MockToggle />
+                {!AUTH_DISABLED && <AuthButtons />}
+              </div>
             </div>
           </header>
           <main className="container">{children}</main>

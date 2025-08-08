@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToast } from '../components/Toast';
 import { mockPlan, runMockPlan, mockPolicy } from '../lib/mock';
+import { useMockMode } from '../lib/useMock';
 
 type Message = { role: 'user' | 'assistant'; content: string };
 type PlanStep = { id: string; title: string; status: 'pending' | 'planned' | 'running' | 'succeeded' | 'failed' };
@@ -19,7 +20,7 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const { push } = useToast();
-  const MOCK = true;
+  const [MOCK] = useMockMode(true);
 
   useEffect(() => {
     fetch('/api/environments').then((r) => r.json()).then((d) => {
@@ -76,16 +77,26 @@ export default function Page() {
 
   const requestApprovalAction = async () => {
     if (!plan) return;
-    const res = await fetch('/api/approvals', { method: 'POST', body: JSON.stringify({ planId: plan.id }) });
-    const data = await res.json();
-    setApproval({ id: data.approval.id, status: data.approval.status });
+    if (MOCK) {
+      setApproval({ id: 'mock', status: 'requested' });
+      push({ type: 'info', message: 'Approval requested (mock)' });
+    } else {
+      const res = await fetch('/api/approvals', { method: 'POST', body: JSON.stringify({ planId: plan.id }) });
+      const data = await res.json();
+      setApproval({ id: data.approval.id, status: data.approval.status });
+    }
   };
 
   const adminApprove = async () => {
     if (!approval) return;
-    const res = await fetch(`/api/approvals/${approval.id}/approve`, { method: 'POST' });
-    const data = await res.json();
-    setApproval({ id: data.approval.id, status: data.approval.status });
+    if (MOCK) {
+      setApproval({ id: 'mock', status: 'approved' });
+      push({ type: 'success', message: 'Approved (mock)' });
+    } else {
+      const res = await fetch(`/api/approvals/${approval.id}/approve`, { method: 'POST' });
+      const data = await res.json();
+      setApproval({ id: data.approval.id, status: data.approval.status });
+    }
   };
 
   useEffect(() => {
@@ -138,7 +149,7 @@ export default function Page() {
         {!plan && <p className="muted">No plan yet. Ask for one on the left.</p>}
         {plan && (
           <div className="glass card">
-            <p>{plan.summary}</p>
+            <p>{plan.summary} <span className="badge ok">Mock</span></p>
             {policy && (
               <div className="policy">
                 <strong>Policy:</strong>{' '}
