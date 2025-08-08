@@ -1,0 +1,39 @@
+name: Lighthouse (Console)
+
+on:
+  pull_request:
+    paths:
+      - 'apps/console/**'
+      - '.github/workflows/lighthouse.yml'
+
+jobs:
+  lhci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install deps
+        working-directory: apps/console
+        run: npm ci
+      - name: Build
+        working-directory: apps/console
+        run: npm run build
+      - name: Start server
+        working-directory: apps/console
+        run: |
+          nohup npm run start -- -p 4000 &
+          for i in {1..30}; do
+            curl -fsS http://localhost:4000/ && break || sleep 2;
+          done
+      - name: Lighthouse CI
+        uses: treosh/lighthouse-ci-action@v10
+        with:
+          urls: |
+            http://localhost:4000/
+            http://localhost:4000/deployments
+          configPath: ''
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+
