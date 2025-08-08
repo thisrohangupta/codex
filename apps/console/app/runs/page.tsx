@@ -11,14 +11,15 @@ export default function RunsPage() {
   return (
     <div>
       <h2>Runs</h2>
-      <ul>
-        {runs.map((r) => (
-          <li key={r.id}>
-            <strong>{r.planSummary}</strong> — {r.status} — {new Date(r.createdAt).toLocaleString()}
-          </li>
-        ))}
-      </ul>
+      <div className="glass card mt-12">
+        <ul className="stack">
+          {runs.map((r) => (
+            <li key={r.id}>
+              <strong>{r.planSummary}</strong> — {r.status} — {new Date(r.createdAt).toLocaleString()}
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
-

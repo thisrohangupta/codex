@@ -21,28 +21,29 @@ export default function EnvironmentsPage() {
   return (
     <div>
       <h2>Environments</h2>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
-        <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+      <div className="controls mb-8 mt-12">
+        <input className="input" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+        <select className="select" value={provider} onChange={(e) => setProvider(e.target.value)}>
           <option value="aws">AWS</option>
           <option value="gcp">GCP</option>
           <option value="azure">Azure</option>
           <option value="local">Local</option>
         </select>
-        <select value={target} onChange={(e) => setTarget(e.target.value)}>
+        <select className="select" value={target} onChange={(e) => setTarget(e.target.value)}>
           <option value="kubernetes">Kubernetes</option>
           <option value="vm">VM</option>
           <option value="serverless">Serverless</option>
         </select>
-        <input placeholder="region" value={region} onChange={(e) => setRegion(e.target.value)} />
-        <button onClick={create}>Add</button>
+        <input className="input" placeholder="region" value={region} onChange={(e) => setRegion(e.target.value)} />
+        <button className="btn btn-primary" onClick={create}>Add</button>
       </div>
-      <ul>
-        {envs.map((e) => (
-          <li key={e.id}><strong>{e.name}</strong> — {e.provider}/{e.target} — {e.region} — {new Date(e.createdAt).toLocaleString()}</li>
-        ))}
-      </ul>
+      <div className="glass card">
+        <ul className="stack">
+          {envs.map((e) => (
+            <li key={e.id}><strong>{e.name}</strong> — {e.provider}/{e.target} — {e.region} — {new Date(e.createdAt).toLocaleString()}</li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
-

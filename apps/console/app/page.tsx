@@ -72,12 +72,12 @@ export default function Page() {
   }, [runId]);
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+    <div className="grid-2">
       <section>
         <h2>Chat</h2>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <label>Environment:</label>
-          <select value={envId ?? ''} onChange={(e) => setEnvId(e.target.value)}>
+        <div className="controls mb-8">
+          <label className="muted">Environment:</label>
+          <select className="select" value={envId ?? ''} onChange={(e) => setEnvId(e.target.value)}>
             {envs.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.name} — {e.provider}/{e.target}
@@ -85,27 +85,28 @@ export default function Page() {
             ))}
           </select>
         </div>
-        <div style={{ border: '1px solid #eee', borderRadius: 8, padding: 12, minHeight: 200 }}>
+        <div className="glass card messages">
           {messages.map((m, i) => (
-            <div key={i} style={{ marginBottom: 8 }}>
+            <div key={i} className="msg">
               <strong>{m.role === 'user' ? 'You' : 'AI'}:</strong> {m.content}
             </div>
           ))}
         </div>
-        <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Describe what you want to do" style={{ flex: 1 }} />
-          <button onClick={requestPlan}>Plan</button>
+        <div className="controls mt-8">
+          <input className="input" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Describe what you want to do" />
+          <button className="btn btn-primary" onClick={requestPlan}>Plan</button>
         </div>
       </section>
       <section>
         <h2>Plan Preview</h2>
-        {!plan && <p>No plan yet. Ask for one on the left.</p>}
+        {!plan && <p className="muted">No plan yet. Ask for one on the left.</p>}
         {plan && (
-          <div>
+          <div className="glass card">
             <p>{plan.summary}</p>
             {policy && (
-              <div style={{ padding: 8, border: '1px solid #eee', borderRadius: 6, marginBottom: 8 }}>
-                <strong>Policy:</strong> {policy.allow ? 'allow' : 'blocked'}
+              <div className="policy">
+                <strong>Policy:</strong>{' '}
+                <span className={policy.allow ? 'ok' : 'blocked'}>{policy.allow ? 'allow' : 'blocked'}</span>
                 <ul>
                   {policy.findings.map((f, i) => (
                     <li key={i}>
@@ -115,17 +116,17 @@ export default function Page() {
                 </ul>
               </div>
             )}
-            <ol>
+            <ol className="stack">
               {plan.steps.map((s) => (
                 <li key={s.id}>
                   {s.title} — <em>{s.status}</em>
                 </li>
               ))}
             </ol>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {!approval && <button onClick={requestApprovalAction}>Request Approval</button>}
-              {approval && approval.status === 'requested' && <button onClick={adminApprove}>Admin Approve</button>}
-              <button onClick={approvePlan} disabled={!!runId || (policy && !policy.allow && (!approval || approval.status !== 'approved'))}>
+            <div className="controls mt-8">
+              {!approval && <button className="btn btn-ghost" onClick={requestApprovalAction}>Request Approval</button>}
+              {approval && approval.status === 'requested' && <button className="btn btn-ghost" onClick={adminApprove}>Admin Approve</button>}
+              <button className="btn btn-primary" onClick={approvePlan} disabled={!!runId || (policy && !policy.allow && (!approval || approval.status !== 'approved'))}>
                 Execute
               </button>
             </div>

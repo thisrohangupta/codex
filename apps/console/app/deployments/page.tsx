@@ -69,74 +69,68 @@ export default function DeploymentsPage() {
   return (
     <div>
       <h2>Deployments Wizard</h2>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <section>
-          <div style={{ display: 'grid', gap: 8 }}>
-            <label>
-              Environment
-              <select value={envId} onChange={(e) => { setEnvId(e.target.value); const env = envs.find(x => x.id === e.target.value); setNamespace(env?.name || ''); }}>
-                {envs.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.name} — {e.provider}/{e.target}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Service
-              <select value={svc} onChange={(e) => setSvc(e.target.value)}>
-                {catalog.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Release
-              <input value={release} onChange={(e) => setRelease(e.target.value)} />
-            </label>
-            <label>
-              Namespace
-              <input value={namespace} onChange={(e) => setNamespace(e.target.value)} />
-            </label>
-            <label>
-              Image (repo:tag)
-              <input value={image} onChange={(e) => setImage(e.target.value)} />
-            </label>
-            <div>
-              <button onClick={createPlan}>Create Plan</button>
-              <button onClick={execute} disabled={!plan || (policy && !policy.allow)} style={{ marginLeft: 8 }}>
+      <div className="grid-2 mt-12">
+        <section className="glass card">
+          <div className="stack">
+            <label className="muted">Environment</label>
+            <select className="select" value={envId} onChange={(e) => { setEnvId(e.target.value); const env = envs.find(x => x.id === e.target.value); setNamespace(env?.name || ''); }}>
+              {envs.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name} — {e.provider}/{e.target}
+                </option>
+              ))}
+            </select>
+            <label className="muted">Service</label>
+            <select className="select" value={svc} onChange={(e) => setSvc(e.target.value)}>
+              {catalog.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.id}
+                </option>
+              ))}
+            </select>
+            <label className="muted">Release</label>
+            <input className="input" value={release} onChange={(e) => setRelease(e.target.value)} />
+            <label className="muted">Namespace</label>
+            <input className="input" value={namespace} onChange={(e) => setNamespace(e.target.value)} />
+            <label className="muted">Image (repo:tag)</label>
+            <input className="input" value={image} onChange={(e) => setImage(e.target.value)} />
+            <div className="controls mt-8">
+              <button className="btn btn-ghost" onClick={createPlan}>Create Plan</button>
+              <button className="btn btn-primary" onClick={execute} disabled={!plan || (policy && !policy.allow)}>
                 Execute
               </button>
             </div>
           </div>
         </section>
         <section>
-          <h3>Helm Values Preview</h3>
-          <pre style={{ background: '#fafafa', padding: 10, border: '1px solid #eee', borderRadius: 6 }}>{valuesYaml}</pre>
-          <h3>Plan</h3>
-          {!plan && <p>No plan yet.</p>}
-          {plan && (
-            <div>
-              <p>{plan.summary}</p>
-              <ol>
-                {plan.steps.map((s) => (
-                  <li key={s.id}>{s.title}</li>
-                ))}
-              </ol>
-              {policy && (
-                <div style={{ padding: 8, border: '1px solid #eee', borderRadius: 6, marginTop: 8 }}>
-                  <strong>Policy:</strong> {policy.allow ? 'allow' : 'blocked'}
-                  <ul>
-                    {policy.findings.map((f, i) => (
-                      <li key={i}>[{f.level}] {f.code}: {f.message}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
+          <div className="glass card mb-8">
+            <h3>Helm Values Preview</h3>
+            <pre style={{ whiteSpace: 'pre-wrap' }}>{valuesYaml}</pre>
+          </div>
+          <div className="glass card">
+            <h3>Plan</h3>
+            {!plan && <p className="muted">No plan yet.</p>}
+            {plan && (
+              <div>
+                <p>{plan.summary}</p>
+                <ol className="stack">
+                  {plan.steps.map((s) => (
+                    <li key={s.id}>{s.title}</li>
+                  ))}
+                </ol>
+                {policy && (
+                  <div className="policy mt-8">
+                    <strong>Policy:</strong> {policy.allow ? 'allow' : 'blocked'}
+                    <ul>
+                      {policy.findings.map((f, i) => (
+                        <li key={i}>[{f.level}] {f.code}: {f.message}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </section>
       </div>
     </div>
