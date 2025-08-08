@@ -1,0 +1,22 @@
+name: Enable Auto-Merge
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    if: ${{ github.event.label.name == 'automerge' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable PR auto-merge (squash)
+        uses: peter-evans/enable-pull-request-automerge@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          pull-request-number: ${{ github.event.pull_request.number }}
+          merge-method: squash
+
