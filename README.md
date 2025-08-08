@@ -37,6 +37,9 @@ Helper CLI: `scripts/devopsctl.sh [build|test|plan|apply|deploy]`.
   - Optional admins: `ADMIN_EMAILS=alice@example.com,bob@example.com`
 - Start and sign in via the header button. Admins can approve requests; developers can request approvals.
 
+Quick testing without auth
+- To bypass auth entirely, set `AUTH_DISABLED=true` in `apps/console/.env.local`. The console will hide sign-in and API routes will not require authentication.
+
 ## Approvals, Policy, Environments
 - After planning, policies are evaluated; prod deploys require canary/blue-green.
 - Request and approve changes in-UI before execution.

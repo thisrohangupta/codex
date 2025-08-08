@@ -3,6 +3,7 @@ import Link from 'next/link';
 import Providers from '../components/Providers';
 import dynamic from 'next/dynamic';
 const AuthButtons = dynamic(() => import('../components/AuthButtons'), { ssr: false });
+const AUTH_DISABLED = process.env.AUTH_DISABLED === 'true';
 
 export const metadata = {
   title: 'AI DevOps Console',
@@ -21,9 +22,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/deployments">Deployments</Link>
             <Link href="/environments">Environments</Link>
           </nav>
-          <div style={{ marginLeft: 'auto' }}>
-            <AuthButtons />
-          </div>
+          {!AUTH_DISABLED && (
+            <div style={{ marginLeft: 'auto' }}>
+              <AuthButtons />
+            </div>
+          )}
         </header>
         <Providers>
           <main style={{ padding: 16, maxWidth: 1100, margin: '0 auto' }}>{children}</main>
