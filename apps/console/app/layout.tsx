@@ -1,8 +1,7 @@
 import './globals.css';
 import Link from 'next/link';
 import Providers from '../components/Providers';
-import dynamic from 'next/dynamic';
-const AuthButtons = dynamic(() => import('../components/AuthButtons'), { ssr: false });
+import AuthButtons from '../components/AuthButtons';
 const AUTH_DISABLED = process.env.AUTH_DISABLED === 'true';
 
 export const metadata = {
