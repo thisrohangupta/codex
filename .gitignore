@@ -2,6 +2,7 @@
 node_modules/
 dist/
 build/
+.next/
 .DS_Store
 .idea/
 .vscode/
@@ -25,6 +26,10 @@ android/.gradle/
 android/build/
 ios/DerivedData/
 
+# Next.js local data/artifacts
+apps/console/.next/
+apps/console/data/
+
 # Terraform
 .terraform/
 *.tfstate*
@@ -36,4 +41,3 @@ charts/*/charts/
 .env
 .env.*.local
 .env.local
-
