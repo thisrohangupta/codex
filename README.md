@@ -48,4 +48,13 @@ Quick testing without auth
   - The wizard auto-suggests the latest image tag (best-effort) for GHCR images and fills Helm values (image repo/tag, service targetPort) based on the selected service.
   - Policy checks run after plan creation; Execute is disabled if policy fails (Conftest supported when installed).
 
+### Caching & Security Hardening
+- API responses are sent with `Cache-Control: no-store`.
+- Static assets under `/_next/static/*` are cached for 1 year with `immutable`.
+- HTML/pages use a short cache (`max-age=60`) suitable for local and simple deployments; customize per route as needed.
+- Image optimization is disabled (`images.unoptimized: true`) to avoid legacy DoS vectors when not using next/image.
+
+### CI Security
+- NPM Audit workflow checks `apps/console` dependencies on PR and `main` (fails on high severity): `.github/workflows/npm-audit.yml`.
+
 See `AGENTS.md` for contribution standards.
