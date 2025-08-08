@@ -1,0 +1,14 @@
+replicaCount: 1
+
+image:
+  repository: example/web
+  tag: local
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+resources: {}
+

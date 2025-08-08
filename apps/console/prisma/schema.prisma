@@ -1,0 +1,48 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Plan {
+  id      String @id
+  summary String
+}
+
+model Run {
+  id          String @id
+  planSummary String
+  createdAt   DateTime
+  status      String
+}
+
+model Approval {
+  id         String @id
+  planId     String
+  status     String
+  requestedBy String
+  decidedBy   String?
+  createdAt  DateTime
+  decidedAt  DateTime?
+}
+
+model Environment {
+  id        String @id
+  name      String
+  provider  String
+  target    String
+  region    String?
+  createdAt DateTime
+}
+
+model Audit {
+  id     String @id
+  ts     DateTime
+  actor  String
+  action String
+  target String?
+}
+

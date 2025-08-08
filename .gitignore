@@ -1,0 +1,39 @@
+# General
+node_modules/
+dist/
+build/
+.DS_Store
+.idea/
+.vscode/
+coverage/
+*.log
+
+# Python
+__pycache__/
+.venv/
+*.pyc
+
+# Java
+target/
+.mvn/
+
+# Go
+bin/
+
+# iOS/Android
+android/.gradle/
+android/build/
+ios/DerivedData/
+
+# Terraform
+.terraform/
+*.tfstate*
+
+# Helm
+charts/*/charts/
+
+# Env
+.env
+.env.*.local
+.env.local
+
