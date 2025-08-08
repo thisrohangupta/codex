@@ -92,3 +92,20 @@ p, li, label, span { color: var(--muted); }
 .mt-12 { margin-top: 12px; }
 .mb-8 { margin-bottom: 8px; }
 .stack { display: grid; gap: 8px; }
+
+/* Toasts */
+.toast-host { position: fixed; top: 16px; right: 16px; display: grid; gap: 8px; z-index: 100; }
+.toast { padding: 10px 12px; border-radius: 10px; color: var(--text); border: 1px solid var(--glass-border); }
+.toast.success { border-color: rgba(61,220,151,.4); box-shadow: 0 6px 18px rgba(61,220,151,.18); }
+.toast.error { border-color: rgba(239,71,111,.45); box-shadow: 0 6px 18px rgba(239,71,111,.18); }
+.toast.info { border-color: rgba(156,109,255,.4); box-shadow: 0 6px 18px rgba(156,109,255,.18); }
+
+/* Badges */
+.badge { display:inline-block; padding: 4px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--glass-border); color: var(--muted); }
+.badge.ok { color: var(--success); border-color: rgba(61,220,151,.4); }
+.badge.warn { color: var(--warn); border-color: rgba(255,209,102,.4); }
+.badge.fail { color: var(--danger); border-color: rgba(239,71,111,.4); }
+
+/* Skeletons */
+.skeleton { background: linear-gradient(90deg, rgba(255,255,255,0.06) 25%, rgba(255,255,255,0.10) 37%, rgba(255,255,255,0.06) 63%); background-size: 400% 100%; animation: shimmer 1.2s infinite; border-radius: 10px; }
+@keyframes shimmer { 0% { background-position: 100% 0 } 100% { background-position: -100% 0 } }

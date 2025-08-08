@@ -1,6 +1,7 @@
 import './globals.css';
 import Link from 'next/link';
 import Providers from '../components/Providers';
+import { ToastProvider } from '../components/Toast';
 import AuthButtons from '../components/AuthButtons';
 const AUTH_DISABLED = process.env.AUTH_DISABLED === 'true';
 
@@ -14,6 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="app-bg">
         <Providers>
+          <ToastProvider>
           <header className="header glass">
             <div className="header-inner container">
               <strong className="brand">AI DevOps Console</strong>
@@ -31,6 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </header>
           <main className="container">{children}</main>
+          </ToastProvider>
         </Providers>
       </body>
     </html>

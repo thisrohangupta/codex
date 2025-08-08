@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from 'react';
+import { useToast } from '../../components/Toast';
+import { mockPlan, mockPolicy, runMockPlan } from '../../lib/mock';
 
 type Env = { id: string; name: string; provider: string; target: string; region?: string };
 type Plan = { id: string; summary: string; steps: any[] };
@@ -18,6 +20,9 @@ export default function DeploymentsPage() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [policy, setPolicy] = useState<Policy | null>(null);
+  const [loading, setLoading] = useState(false);
+  const { push } = useToast();
+  const MOCK = true;
 
   useEffect(() => {
     fetch('/api/environments').then((r) => r.json()).then((d) => {
@@ -52,18 +57,36 @@ export default function DeploymentsPage() {
   async function createPlan() {
     const meta = { helm: { release, chartPath: 'ops/helm/app', namespace, values: valuesObj } };
     const prompt = `Deploy ${svc} to ${namespace} canary 10%`;
-    const res = await fetch('/api/agent/plan', { method: 'POST', body: JSON.stringify({ prompt, envId, meta }) });
-    const data = await res.json();
-    setPlan(data.plan);
-    const pol = await fetch('/api/policy/evaluate', { method: 'POST', body: JSON.stringify({ planId: data.plan.id }) }).then((r) => r.json());
-    setPolicy(pol);
+    setLoading(true);
+    try {
+      if (MOCK) {
+        const p = mockPlan(prompt);
+        setPlan({ ...p, meta } as any);
+        setPolicy(mockPolicy(p));
+        push({ type: 'success', message: 'Plan created (mock)' });
+      } else {
+        const res = await fetch('/api/agent/plan', { method: 'POST', body: JSON.stringify({ prompt, envId, meta }) });
+        const data = await res.json();
+        setPlan(data.plan);
+        const pol = await fetch('/api/policy/evaluate', { method: 'POST', body: JSON.stringify({ planId: data.plan.id }) }).then((r) => r.json());
+        setPolicy(pol);
+      }
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function execute() {
     if (!plan) return;
-    const res = await fetch('/api/agent/execute', { method: 'POST', body: JSON.stringify({ planId: plan.id }) });
-    const data = await res.json();
-    setRunId(data.runId);
+    if (MOCK) {
+      setRunId('mock');
+      runMockPlan(plan, () => {});
+      push({ type: 'success', message: 'Execution started (mock)' });
+    } else {
+      const res = await fetch('/api/agent/execute', { method: 'POST', body: JSON.stringify({ planId: plan.id }) });
+      const data = await res.json();
+      setRunId(data.runId);
+    }
   }
 
   return (
@@ -95,7 +118,7 @@ export default function DeploymentsPage() {
             <label className="muted">Image (repo:tag)</label>
             <input className="input" value={image} onChange={(e) => setImage(e.target.value)} />
             <div className="controls mt-8">
-              <button className="btn btn-ghost" onClick={createPlan}>Create Plan</button>
+              <button className="btn btn-ghost" onClick={createPlan} disabled={loading}>Create Plan</button>
               <button className="btn btn-primary" onClick={execute} disabled={!plan || (policy && !policy.allow)}>
                 Execute
               </button>

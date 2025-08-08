@@ -1,5 +1,7 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useToast } from '../components/Toast';
+import { mockPlan, runMockPlan, mockPolicy } from '../lib/mock';
 
 type Message = { role: 'user' | 'assistant'; content: string };
 type PlanStep = { id: string; title: string; status: 'pending' | 'planned' | 'running' | 'succeeded' | 'failed' };
@@ -14,6 +16,10 @@ export default function Page() {
   const [runId, setRunId] = useState<string | null>(null);
   const [envs, setEnvs] = useState<any[]>([]);
   const [envId, setEnvId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const logRef = useRef<HTMLDivElement>(null);
+  const { push } = useToast();
+  const MOCK = true;
 
   useEffect(() => {
     fetch('/api/environments').then((r) => r.json()).then((d) => {
@@ -24,19 +30,48 @@ export default function Page() {
 
   const requestPlan = async () => {
     setMessages((m) => [...m, { role: 'user', content: input }]);
-    const res = await fetch('/api/agent/plan', { method: 'POST', body: JSON.stringify({ prompt: input, envId }) });
-    const data = await res.json();
-    setPlan(data.plan);
-    setMessages((m) => [...m, { role: 'assistant', content: data.plan.summary }]);
-    const pol = await fetch('/api/policy/evaluate', { method: 'POST', body: JSON.stringify({ planId: data.plan.id }) }).then((r) => r.json());
-    setPolicy(pol);
+    setLoading(true);
+    try {
+      if (MOCK) {
+        const p = mockPlan(input);
+        setPlan(p);
+        setMessages((m) => [...m, { role: 'assistant', content: p.summary }]);
+        setPolicy(mockPolicy(p));
+        push({ type: 'success', message: 'Plan created (mock)' });
+      } else {
+        const res = await fetch('/api/agent/plan', { method: 'POST', body: JSON.stringify({ prompt: input, envId }) });
+        const data = await res.json();
+        setPlan(data.plan);
+        setMessages((m) => [...m, { role: 'assistant', content: data.plan.summary }]);
+        const pol = await fetch('/api/policy/evaluate', { method: 'POST', body: JSON.stringify({ planId: data.plan.id }) }).then((r) => r.json());
+        setPolicy(pol);
+      }
+    } catch (e) {
+      push({ type: 'error', message: 'Failed to create plan' });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const approvePlan = async () => {
     if (!plan) return;
-    const res = await fetch('/api/agent/execute', { method: 'POST', body: JSON.stringify({ planId: plan.id }) });
-    const data = await res.json();
-    setRunId(data.runId);
+    if (MOCK) {
+      setRunId('mock');
+      runMockPlan(plan, (u) => {
+        if (u.type === 'status' && u.stepId) {
+          setPlan((p) => (p ? { ...p, steps: p.steps.map((s) => (s.id === u.stepId ? { ...s, status: u.status } : s)) } : p));
+        }
+        if (u.type === 'log') {
+          setMessages((m) => [...m, { role: 'assistant', content: u.line }]);
+          if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+        }
+      });
+      push({ type: 'success', message: 'Execution started (mock)' });
+    } else {
+      const res = await fetch('/api/agent/execute', { method: 'POST', body: JSON.stringify({ planId: plan.id }) });
+      const data = await res.json();
+      setRunId(data.runId);
+    }
   };
 
   const requestApprovalAction = async () => {
@@ -85,16 +120,17 @@ export default function Page() {
             ))}
           </select>
         </div>
-        <div className="glass card messages">
+        <div className="glass card messages" ref={logRef} style={{ maxHeight: 280, overflow: 'auto' }}>
           {messages.map((m, i) => (
             <div key={i} className="msg">
               <strong>{m.role === 'user' ? 'You' : 'AI'}:</strong> {m.content}
             </div>
           ))}
+          {loading && <div className="skeleton" style={{ height: 16 }} />}
         </div>
         <div className="controls mt-8">
           <input className="input" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Describe what you want to do" />
-          <button className="btn btn-primary" onClick={requestPlan}>Plan</button>
+          <button className="btn btn-primary" onClick={requestPlan} disabled={loading}>Plan</button>
         </div>
       </section>
       <section>
@@ -119,7 +155,7 @@ export default function Page() {
             <ol className="stack">
               {plan.steps.map((s) => (
                 <li key={s.id}>
-                  {s.title} — <em>{s.status}</em>
+                  {s.title} — <span className={`badge ${s.status === 'succeeded' ? 'ok' : s.status === 'running' ? 'warn' : ''}`}>{s.status}</span>
                 </li>
               ))}
             </ol>
