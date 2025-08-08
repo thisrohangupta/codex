@@ -85,7 +85,7 @@ export default function DeploymentsPage() {
             <label>
               Service
               <select value={svc} onChange={(e) => setSvc(e.target.value)}>
-                {services.map((s) => (
+                {catalog.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.id}
                   </option>
