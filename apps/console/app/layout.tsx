@@ -13,23 +13,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="app-bg">
-        <header className="header glass">
-          <div className="header-inner container">
-            <strong className="brand">AI DevOps Console</strong>
-            <nav className="nav">
-              <Link href="/">Chat</Link>
-              <Link href="/runs">Runs</Link>
-              <Link href="/deployments">Deployments</Link>
-              <Link href="/environments">Environments</Link>
-            </nav>
-            {!AUTH_DISABLED && (
-              <div style={{ marginLeft: 'auto' }}>
-                <AuthButtons />
-              </div>
-            )}
-          </div>
-        </header>
         <Providers>
+          <header className="header glass">
+            <div className="header-inner container">
+              <strong className="brand">AI DevOps Console</strong>
+              <nav className="nav">
+                <Link href="/">Chat</Link>
+                <Link href="/runs">Runs</Link>
+                <Link href="/deployments">Deployments</Link>
+                <Link href="/environments">Environments</Link>
+              </nav>
+              {!AUTH_DISABLED && (
+                <div style={{ marginLeft: 'auto' }}>
+                  <AuthButtons />
+                </div>
+              )}
+            </div>
+          </header>
           <main className="container">{children}</main>
         </Providers>
       </body>
