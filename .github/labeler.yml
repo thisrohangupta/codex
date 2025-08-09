@@ -1,20 +1,20 @@
-area:console:
+'area:console':
   - 'apps/console/**'
-area:web:
+'area:web':
   - 'apps/web/**'
-area:api-python:
+'area:api-python':
   - 'apps/api-python/**'
-area:api-go:
+'area:api-go':
   - 'apps/api-go/**'
-area:api-java:
+'area:api-java':
   - 'apps/api-java/**'
-area:functions:
+'area:functions':
   - 'apps/functions/**'
-area:mobile:
+'area:mobile':
   - 'apps/mobile/**'
-area:salesforce:
+'area:salesforce':
   - 'apps/salesforce/**'
-area:ops:
+'area:ops':
   - 'ops/**'
 ci:
   - '.github/workflows/**'
