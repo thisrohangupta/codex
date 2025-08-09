@@ -1,9 +1,9 @@
 import { Chess } from 'chess.js';
 
-type Square =
+export type Square =
   `${'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h'}${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}`;
 
-const APP = document.getElementById('app')!;
+const APP = typeof document !== 'undefined' ? document.getElementById('app')! : null;
 
 // Simple sound engine using WebAudio beeps
 class Sound {
@@ -150,7 +150,7 @@ function renderGameUI() {
   render();
 }
 
-function squareAt(file: number, rank: number): Square {
+export function squareAt(file: number, rank: number): Square {
   return (String.fromCharCode('a'.charCodeAt(0) + file) + (rank + 1)) as Square;
 }
 
@@ -232,7 +232,7 @@ function onSquareClick(sq: Square) {
   render();
 }
 
-function glyph(type: string, color: 'w' | 'b') {
+export function glyph(type: string, color: 'w' | 'b') {
   const map: Record<string, [string, string]> = {
     k: ['♔', '♚'],
     q: ['♕', '♛'],
@@ -282,7 +282,7 @@ export function evaluateBoard(ch: Chess): number {
   return score;
 }
 
-function minimaxRoot(depth: number, ch: Chess, isMax: boolean) {
+export function minimaxRoot(depth: number, ch: Chess, isMax: boolean) {
   const moves: any[] = ch.moves({ verbose: true });
   let bestMove: any = null;
   let bestVal = isMax ? -Infinity : Infinity;
@@ -302,7 +302,7 @@ function minimaxRoot(depth: number, ch: Chess, isMax: boolean) {
   return bestMove;
 }
 
-function minimax(
+export function minimax(
   depth: number,
   ch: Chess,
   alpha: number,
@@ -358,4 +358,6 @@ function maybeAITurn() {
 }
 
 // Boot
-renderMenu();
+if (APP) {
+  renderMenu();
+}
