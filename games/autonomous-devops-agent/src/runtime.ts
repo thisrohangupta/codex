@@ -15,7 +15,7 @@ import {
 import { createLlmProvider } from './llm.js';
 import { hasValidToken, readOAuthTokenStore } from './oauth.js';
 import { createDeploymentPolicy } from './policy.js';
-import type { AgentContext, WorkItem } from './types.js';
+import type { AgentContext, TargetProbeResult, WorkItem } from './types.js';
 
 export interface AgentRuntime {
   readonly config: AgentRuntimeConfig;
@@ -23,6 +23,8 @@ export interface AgentRuntime {
   readonly eventBus: EventBus;
   runFromJira(issueId: string, options?: RunOptions): Promise<AgentContext>;
   runFromPullRequest(repo: string, prNumber: string, options?: RunOptions): Promise<AgentContext>;
+  probeTargetsFromJira(issueId: string, options?: RunOptions): Promise<TargetProbeResult>;
+  probeTargetsFromPullRequest(repo: string, prNumber: string, options?: RunOptions): Promise<TargetProbeResult>;
   describe(): string[];
 }
 
@@ -63,6 +65,30 @@ class DefaultAgentRuntime implements AgentRuntime {
     this.applyRunOptions(workItem, options);
 
     return this.agent.run(workItem);
+  }
+
+  async probeTargetsFromJira(issueId: string, options?: RunOptions): Promise<TargetProbeResult> {
+    const workItem =
+      this.config.mode === 'live'
+        ? await this.deps.jira.fetchWorkItem(issueId)
+        : this.createDryRunJiraItem(issueId);
+
+    this.applyRunOptions(workItem, options);
+    return this.probeTargetsForWorkItem(workItem);
+  }
+
+  async probeTargetsFromPullRequest(
+    repo: string,
+    prNumber: string,
+    options?: RunOptions,
+  ): Promise<TargetProbeResult> {
+    const workItem =
+      this.config.mode === 'live'
+        ? await this.deps.repo.fetchPullRequestWorkItem(repo, prNumber)
+        : this.createDryRunPullRequestItem(repo, prNumber);
+
+    this.applyRunOptions(workItem, options);
+    return this.probeTargetsForWorkItem(workItem);
   }
 
   describe(): string[] {
@@ -109,6 +135,68 @@ class DefaultAgentRuntime implements AgentRuntime {
         ...(options.approvalRequestId ? { approvalRequestId: options.approvalRequestId } : {}),
       };
     }
+  }
+
+  private async probeTargetsForWorkItem(workItem: WorkItem): Promise<TargetProbeResult> {
+    const executor = this.deps.executor;
+    if (!executor) {
+      throw new Error('Executor is disabled. Set EXECUTOR_ENABLED=true to use target probe.');
+    }
+
+    const context: AgentContext = {
+      runId: `probe-${workItem.kind}-${workItem.id}-${Date.now()}`,
+      workItem,
+      status: 'pending',
+      plan: [],
+      deployments: [],
+      reviewNotes: [],
+    };
+
+    if (executor.prepareWorkspace) {
+      context.workspacePreparationReport = await executor.prepareWorkspace(context);
+    }
+
+    if (executor.probeTargets) {
+      return executor.probeTargets(context);
+    }
+
+    return {
+      runId: context.runId,
+      workItem: context.workItem,
+      workspacePath: context.workspacePath,
+      deploymentConfigPath: context.deploymentConfigPath,
+      binaryPath: context.binaryPath,
+      workspacePreparationReport: context.workspacePreparationReport,
+      preflightReport: context.preflightReport,
+      environments: [
+        {
+          environment: 'dev',
+          source: 'legacy',
+          targets: [
+            {
+              name: 'legacy-dev',
+              type: 'legacy',
+              source: 'legacy',
+              deployCommand: this.config.execution.deployDevCommand,
+              validateCommand: this.config.execution.validateDevCommand,
+            },
+          ],
+        },
+        {
+          environment: 'prod',
+          source: 'legacy',
+          targets: [
+            {
+              name: 'legacy-prod',
+              type: 'legacy',
+              source: 'legacy',
+              deployCommand: this.config.execution.deployProdCommand,
+              validateCommand: this.config.execution.validateProdCommand,
+            },
+          ],
+        },
+      ],
+    };
   }
 }
 
@@ -225,6 +313,22 @@ function createExecutor(config: AgentRuntimeConfig): ShellDeliveryExecutor | und
     deployProdCommand: config.execution.deployProdCommand,
     validateDevCommand: config.execution.validateDevCommand,
     validateProdCommand: config.execution.validateProdCommand,
+    cloneSourceEnabled: config.execution.cloneSourceEnabled,
+    sourceRoot: config.execution.sourceRoot,
+    sourceRepoUrl: config.execution.sourceRepoUrl,
+    sourceRepoRef: config.execution.sourceRepoRef,
+    sourceRepoToken: config.execution.sourceRepoToken,
+    cloneDeploymentConfigEnabled: config.execution.cloneDeploymentConfigEnabled,
+    deploymentConfigRepoUrl: config.execution.deploymentConfigRepoUrl,
+    deploymentConfigRepoRef: config.execution.deploymentConfigRepoRef,
+    deploymentConfigPath: config.execution.deploymentConfigPath,
+    binaryDownloadUrl: config.execution.binaryDownloadUrl,
+    binaryDownloadCommand: config.execution.binaryDownloadCommand,
+    binarySha256: config.execution.binarySha256,
+    deploymentTargets: config.execution.deploymentTargets,
+    autoDetectTargets: config.execution.autoDetectTargets,
+    preflightEnabled: config.execution.preflightEnabled,
+    preflightAuthChecks: config.execution.preflightAuthChecks,
   });
 }
 

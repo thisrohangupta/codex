@@ -30,9 +30,23 @@ export async function runChatTests(): Promise<void> {
   const authStatus = parseChatCommand('auth status');
   assertEqual(authStatus.type, 'auth-status', 'auth status command should parse');
 
+  const probeJira = parseChatCommand('probe targets jira DEV-500');
+  assertEqual(probeJira.type, 'probe-targets-jira', 'target probe jira command should parse');
+  if (probeJira.type === 'probe-targets-jira') {
+    assertEqual(probeJira.issueId, 'DEV-500', 'target probe jira should include issue id');
+  }
+
+  const probePr = parseChatCommand('probe targets pr acme/service#77');
+  assertEqual(probePr.type, 'probe-targets-pr', 'target probe pr command should parse');
+  if (probePr.type === 'probe-targets-pr') {
+    assertEqual(probePr.repo, 'acme/service', 'target probe pr should include repo');
+    assertEqual(probePr.prNumber, '77', 'target probe pr should include PR number');
+  }
+
   const unknown = parseChatCommand('run this now');
   assertEqual(unknown.type, 'unknown', 'non-command text should be unknown');
 
   const help = helpText();
   assertTrue(help.includes('run jira DEV-123'), 'help should include jira run example');
+  assertTrue(help.includes('probe targets jira DEV-123'), 'help should include target probe command');
 }

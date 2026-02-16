@@ -8,6 +8,7 @@ export * from './agent.js';
 export * from './approvals.js';
 export * from './chat.js';
 export * from './config.js';
+export * from './deployment-targets.js';
 export * from './executor.js';
 export * from './event-bus.js';
 export * from './integrations.js';

@@ -1,4 +1,5 @@
 import type { ApiKeyConfig } from './types.js';
+import { parseDeploymentTargets, type DeploymentTarget } from './deployment-targets.js';
 import type { DeploymentPolicyMode } from './policy.js';
 
 export type RuntimeMode = 'dry-run' | 'live';
@@ -57,6 +58,22 @@ export interface ExecutionRuntimeConfig {
   deployProdCommand: string;
   validateDevCommand: string;
   validateProdCommand: string;
+  cloneSourceEnabled: boolean;
+  sourceRoot: string;
+  sourceRepoUrl?: string;
+  sourceRepoRef?: string;
+  sourceRepoToken?: string;
+  cloneDeploymentConfigEnabled: boolean;
+  deploymentConfigRepoUrl?: string;
+  deploymentConfigRepoRef?: string;
+  deploymentConfigPath: string;
+  binaryDownloadUrl?: string;
+  binaryDownloadCommand?: string;
+  binarySha256?: string;
+  deploymentTargets: DeploymentTarget[];
+  autoDetectTargets: boolean;
+  preflightEnabled: boolean;
+  preflightAuthChecks: boolean;
 }
 
 export interface QueueRuntimeConfig {
@@ -166,6 +183,22 @@ export function readRuntimeConfig(
       validateProdCommand:
         env.VALIDATE_PROD_COMMAND ??
         'kubectl rollout status deployment/${K8S_DEPLOYMENT:-app} -n ${K8S_PROD_NAMESPACE:-prod} --timeout=180s',
+      cloneSourceEnabled: parseBoolean(env.EXECUTOR_CLONE_SOURCE),
+      sourceRoot: env.EXECUTOR_SOURCE_ROOT ?? '.agent/workspaces',
+      sourceRepoUrl: env.EXECUTOR_SOURCE_REPO_URL,
+      sourceRepoRef: env.EXECUTOR_SOURCE_REPO_REF,
+      sourceRepoToken: env.EXECUTOR_SOURCE_REPO_TOKEN ?? env.GITHUB_TOKEN,
+      cloneDeploymentConfigEnabled: parseBoolean(env.EXECUTOR_CLONE_DEPLOY_CONFIG),
+      deploymentConfigRepoUrl: env.EXECUTOR_DEPLOY_CONFIG_REPO_URL,
+      deploymentConfigRepoRef: env.EXECUTOR_DEPLOY_CONFIG_REPO_REF,
+      deploymentConfigPath: env.EXECUTOR_DEPLOY_CONFIG_PATH ?? '.',
+      binaryDownloadUrl: env.EXECUTOR_BINARY_URL,
+      binaryDownloadCommand: env.EXECUTOR_BINARY_DOWNLOAD_COMMAND,
+      binarySha256: normalizeSha(env.EXECUTOR_BINARY_SHA256),
+      deploymentTargets: parseDeploymentTargets(env.EXECUTOR_DEPLOYMENT_TARGETS_JSON),
+      autoDetectTargets: parseBooleanWithFallback(env.EXECUTOR_AUTO_DETECT_TARGETS, true),
+      preflightEnabled: parseBooleanWithFallback(env.EXECUTOR_PREFLIGHT_ENABLED, true),
+      preflightAuthChecks: parseBooleanWithFallback(env.EXECUTOR_PREFLIGHT_AUTH_CHECKS, true),
     },
     queue: {
       storePath: env.QUEUE_STORE_PATH ?? '.agent/run-queue.json',
@@ -253,6 +286,19 @@ export function describeRuntimeConfig(config: AgentRuntimeConfig): string[] {
   lines.push(`oauth.github=${hasGithubOAuth ? 'configured' : 'not configured'}`);
   lines.push(`oauth.jira=${hasJiraOAuth ? 'configured' : 'not configured'}`);
   lines.push(`executor=${config.execution.enabled ? `enabled (${config.execution.workdir})` : 'disabled'}`);
+  lines.push(
+    `executor.targets=${config.execution.deploymentTargets.length} configured, autoDetect=${config.execution.autoDetectTargets}`,
+  );
+  lines.push(`executor.cloneSource=${config.execution.cloneSourceEnabled ? 'enabled' : 'disabled'}`);
+  lines.push(
+    `executor.cloneDeployConfig=${config.execution.cloneDeploymentConfigEnabled ? 'enabled' : 'disabled'}`,
+  );
+  lines.push(
+    `executor.binary=${config.execution.binaryDownloadUrl || config.execution.binaryDownloadCommand ? 'enabled' : 'disabled'}`,
+  );
+  lines.push(
+    `executor.preflight=${config.execution.preflightEnabled ? 'enabled' : 'disabled'} (authChecks=${config.execution.preflightAuthChecks ? 'enabled' : 'disabled'})`,
+  );
   lines.push(`queue=${config.queue.storePath} (poll=${config.queue.pollIntervalMs}ms)`);
   lines.push(`policy=${config.policy.mode} (approvals=${config.policy.approvalStorePath})`);
   lines.push(`schedule=${config.schedule.storePath} (poll=${config.schedule.pollIntervalMs}ms)`);
@@ -288,6 +334,13 @@ function parseBoolean(value: string | undefined): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 }
 
+function parseBooleanWithFallback(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) {
+    return fallback;
+  }
+  return parseBoolean(value);
+}
+
 function parseInteger(value: string | undefined, fallback: number): number {
   if (!value) {
     return fallback;
@@ -299,6 +352,13 @@ function parseInteger(value: string | undefined, fallback: number): number {
   }
 
   return parsed;
+}
+
+function normalizeSha(value: string | undefined): string | undefined {
+  if (!value?.trim()) {
+    return undefined;
+  }
+  return value.trim().toLowerCase();
 }
 
 function asPolicyMode(value: string | undefined): DeploymentPolicyMode {

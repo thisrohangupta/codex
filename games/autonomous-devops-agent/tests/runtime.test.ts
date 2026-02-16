@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentRuntime } from '../src/runtime.js';
@@ -9,6 +9,7 @@ export async function runRuntimeTests(): Promise<void> {
   await testDryRunRuntime();
   testLiveValidation();
   testLiveRuntimeWithStoredOAuthTokens();
+  await testTargetProbeRuntime();
 }
 
 async function testDryRunRuntime(): Promise<void> {
@@ -82,6 +83,30 @@ function testLiveRuntimeWithStoredOAuthTokens(): void {
   assertTrue(
     runtime.describe().some((line) => line === 'jira=configured'),
     'runtime should hydrate Jira token from OAuth token store',
+  );
+
+  rmSync(tempDir, { recursive: true, force: true });
+}
+
+async function testTargetProbeRuntime(): Promise<void> {
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-probe-'));
+  mkdirSync(join(tempDir, 'k8s', 'overlays', 'dev'), { recursive: true });
+  writeFileSync(join(tempDir, 'k8s', 'overlays', 'dev', 'deployment.yaml'), 'kind: Deployment\n', 'utf8');
+
+  const runtime = createAgentRuntime(
+    readRuntimeConfig({
+      AGENT_MODE: 'dry-run',
+      EXECUTOR_ENABLED: 'true',
+      EXECUTOR_WORKDIR: tempDir,
+      EXECUTOR_AUTO_DETECT_TARGETS: 'true',
+      EXECUTOR_PREFLIGHT_ENABLED: 'false',
+    }),
+  );
+
+  const probe = await runtime.probeTargetsFromJira('DEV-444');
+  assertTrue(
+    probe.environments.some((entry) => entry.environment === 'dev' && entry.source !== 'legacy'),
+    'target probe should resolve non-legacy dev targets from repo layout',
   );
 
   rmSync(tempDir, { recursive: true, force: true });

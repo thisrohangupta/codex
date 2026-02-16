@@ -72,6 +72,17 @@ export class DevOpsAgent {
     });
 
     if (executor) {
+      await this.executeTask(context, 'prepare-workspace-local', async () => {
+        if (!executor.prepareWorkspace) {
+          context.workspacePath = process.cwd();
+          context.deploymentConfigPath = process.cwd();
+          context.workspacePreparationReport = 'workspace preparation skipped (executor does not implement prepareWorkspace)';
+          return;
+        }
+
+        context.workspacePreparationReport = await executor.prepareWorkspace(context);
+      });
+
       await this.executeTask(context, 'build-local', async () => {
         context.buildReport = await executor.runBuild(context);
       });

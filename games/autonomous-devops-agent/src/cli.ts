@@ -12,7 +12,7 @@ import {
   saveOAuthToken,
 } from './oauth.js';
 import { createAgentRuntime, type AgentRuntime } from './runtime.js';
-import type { AgentContext, AgentEvent } from './types.js';
+import type { AgentContext, AgentEvent, TargetProbeResult } from './types.js';
 
 async function main(): Promise<void> {
   let runtimeState = initializeRuntime(readRuntimeConfig());
@@ -109,6 +109,22 @@ async function main(): Promise<void> {
           runtime,
         );
         output.write(`${summarizeRun(context)}\n`);
+        continue;
+      }
+
+      if (command.type === 'probe-targets-jira') {
+        const probe = await runtime.probeTargetsFromJira(command.issueId, {
+          serviceNowRecordId: defaultServiceNowRecordId,
+        });
+        output.write(`${formatTargetProbe(probe)}\n`);
+        continue;
+      }
+
+      if (command.type === 'probe-targets-pr') {
+        const probe = await runtime.probeTargetsFromPullRequest(command.repo, command.prNumber, {
+          serviceNowRecordId: defaultServiceNowRecordId,
+        });
+        output.write(`${formatTargetProbe(probe)}\n`);
         continue;
       }
 
@@ -220,6 +236,33 @@ function summarizeRun(context: AgentContext): string {
     : '';
 
   return `Run ${context.runId} status=${context.status} deployments=[${deployments || 'none'}]${notes}${validation}`;
+}
+
+function formatTargetProbe(probe: TargetProbeResult): string {
+  const lines = [
+    `Target probe runId=${probe.runId}`,
+    `workItem=${probe.workItem.kind}:${probe.workItem.id} repo=${probe.workItem.repo} branch=${probe.workItem.branch}`,
+    `workspace=${probe.workspacePath ?? 'unknown'}`,
+    `deployConfig=${probe.deploymentConfigPath ?? 'unknown'}`,
+    `binary=${probe.binaryPath ?? 'none'}`,
+  ];
+
+  if (probe.preflightReport) {
+    lines.push(`preflight=${probe.preflightReport}`);
+  }
+
+  for (const env of probe.environments) {
+    lines.push(`env=${env.environment} source=${env.source} targets=${env.targets.length}`);
+    for (const target of env.targets) {
+      lines.push(`  - ${target.name} (${target.type})`);
+      lines.push(`    deploy: ${target.deployCommand}`);
+      if (target.validateCommand) {
+        lines.push(`    validate: ${target.validateCommand}`);
+      }
+    }
+  }
+
+  return lines.join('\n');
 }
 
 function formatEvent(event: AgentEvent): string {

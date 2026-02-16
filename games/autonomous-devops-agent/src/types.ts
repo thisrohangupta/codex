@@ -45,6 +45,12 @@ export interface AgentContext {
   workItem: WorkItem;
   status: RunStatus;
   plan: string[];
+  workspacePath?: string;
+  deploymentConfigPath?: string;
+  binaryPath?: string;
+  workspacePreparationReport?: string;
+  deploymentTargetReport?: string;
+  preflightReport?: string;
   generatedCode?: string;
   testReport?: string;
   buildReport?: string;
@@ -56,7 +62,36 @@ export interface AgentContext {
   reviewNotes: string[];
 }
 
+export type ProbeSource = 'configured' | 'inferred' | 'legacy';
+
+export interface TargetProbeEntry {
+  name: string;
+  type: string;
+  source: ProbeSource;
+  deployCommand: string;
+  validateCommand?: string;
+}
+
+export interface TargetProbeEnvironment {
+  environment: 'dev' | 'prod';
+  source: ProbeSource;
+  targets: TargetProbeEntry[];
+}
+
+export interface TargetProbeResult {
+  runId: string;
+  workItem: WorkItem;
+  workspacePath?: string;
+  deploymentConfigPath?: string;
+  binaryPath?: string;
+  workspacePreparationReport?: string;
+  preflightReport?: string;
+  environments: TargetProbeEnvironment[];
+}
+
 export interface DeliveryExecutor {
+  prepareWorkspace?(context: AgentContext): Promise<string>;
+  probeTargets?(context: AgentContext): Promise<TargetProbeResult>;
   runBuild(context: AgentContext): Promise<string>;
   runTests(context: AgentContext): Promise<string>;
   deployToCluster(environment: 'dev' | 'prod', context: AgentContext): Promise<string>;

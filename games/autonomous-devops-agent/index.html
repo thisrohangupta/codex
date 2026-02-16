@@ -3,17 +3,184 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Autonomous DevOps Agent</title>
+    <title>Ops Pilot Console</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <main class="container">
-      <h1>Autonomous DevOps Agent</h1>
-      <p>
-        This package provides a typed, testable orchestration core for Jira/PR-driven DevOps automation with
-        Harness-oriented integrations.
-      </p>
-      <p class="muted">Run <code>npm run test</code> to execute the full unit suite.</p>
+    <div class="ambient ambient-a"></div>
+    <div class="ambient ambient-b"></div>
+    <main class="app-shell">
+      <header class="hero">
+        <p class="eyebrow">Agentic DevOps Control Plane</p>
+        <h1>Ops Pilot Console</h1>
+        <p class="subtitle">
+          Validate autonomous run loops in-browser: probe targets, queue work, approve policy gates, and schedule
+          recurring jobs.
+        </p>
+      </header>
+
+      <section class="panel endpoint-panel">
+        <div class="panel-head">
+          <h2>Adapter Endpoint</h2>
+          <span id="healthBadge" class="badge neutral">unknown</span>
+        </div>
+        <div class="field-row">
+          <label for="baseUrlInput">Base URL</label>
+          <input id="baseUrlInput" type="url" placeholder="http://127.0.0.1:8790" />
+          <button id="connectBtn" type="button">Connect</button>
+          <button id="refreshAllBtn" type="button">Refresh All</button>
+        </div>
+        <div class="field-row compact">
+          <label class="toggle">
+            <input id="autoRefreshToggle" type="checkbox" checked />
+            <span>Auto refresh (5s)</span>
+          </label>
+          <button id="reloadRuntimeBtn" type="button">Reload Runtime</button>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Run + Probe</h2>
+          </div>
+          <form id="jiraForm" class="stacked-form">
+            <h3>Jira Work Item</h3>
+            <label for="jiraIssueInput">Issue ID</label>
+            <input id="jiraIssueInput" type="text" value="DEV-123" />
+            <label for="jiraSnowInput">ServiceNow (optional)</label>
+            <input id="jiraSnowInput" type="text" placeholder="INC0012345" />
+            <div class="button-row">
+              <button id="probeJiraBtn" type="button">Probe Targets</button>
+              <button id="runJiraBtn" type="button">Run Now</button>
+              <button id="queueJiraBtn" type="button">Queue</button>
+            </div>
+          </form>
+
+          <form id="prForm" class="stacked-form">
+            <h3>Pull Request Work Item</h3>
+            <label for="repoInput">Repository</label>
+            <input id="repoInput" type="text" value="acme/platform-service" />
+            <label for="prNumberInput">PR Number</label>
+            <input id="prNumberInput" type="number" value="42" min="1" />
+            <label for="prSnowInput">ServiceNow (optional)</label>
+            <input id="prSnowInput" type="text" placeholder="INC0012345" />
+            <div class="button-row">
+              <button id="probePrBtn" type="button">Probe Targets</button>
+              <button id="runPrBtn" type="button">Run Now</button>
+              <button id="queuePrBtn" type="button">Queue</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Approvals</h2>
+            <button id="refreshApprovalsBtn" type="button">Refresh</button>
+          </div>
+          <p class="muted">
+            Pending approvals are created when policy mode is <code>approval</code> and production requires human gate.
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Status</th>
+                  <th>Type</th>
+                  <th>Subject</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="approvalsBody">
+                <tr><td colspan="5" class="empty">No approvals loaded</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Queue</h2>
+            <button id="refreshQueueBtn" type="button">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Status</th>
+                  <th>Type</th>
+                  <th>Attempts</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody id="queueBody">
+                <tr><td colspan="5" class="empty">No queue items loaded</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Schedules</h2>
+            <button id="refreshSchedulesBtn" type="button">Refresh</button>
+          </div>
+          <form id="scheduleForm" class="stacked-form">
+            <label for="scheduleNameInput">Name</label>
+            <input id="scheduleNameInput" type="text" value="sync-dev-123" />
+
+            <label for="scheduleCronInput">Cron (5-field)</label>
+            <input id="scheduleCronInput" type="text" value="*/30 * * * *" />
+
+            <label for="scheduleTypeSelect">Target Type</label>
+            <select id="scheduleTypeSelect">
+              <option value="jira">Jira</option>
+              <option value="pull_request">Pull Request</option>
+            </select>
+
+            <div id="scheduleJiraFields">
+              <label for="scheduleIssueInput">Issue ID</label>
+              <input id="scheduleIssueInput" type="text" value="DEV-123" />
+            </div>
+
+            <div id="schedulePrFields" class="hidden">
+              <label for="scheduleRepoInput">Repository</label>
+              <input id="scheduleRepoInput" type="text" value="acme/platform-service" />
+              <label for="schedulePrInput">PR Number</label>
+              <input id="schedulePrInput" type="number" value="42" min="1" />
+            </div>
+
+            <button id="createScheduleBtn" type="submit">Create Schedule</button>
+          </form>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Cron</th>
+                  <th>Type</th>
+                  <th>Next Run</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="schedulesBody">
+                <tr><td colspan="5" class="empty">No schedules loaded</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel output-panel">
+        <div class="panel-head">
+          <h2>Response Viewer</h2>
+          <button id="clearOutputBtn" type="button">Clear</button>
+        </div>
+        <pre id="outputArea">No responses yet.</pre>
+      </section>
     </main>
+    <script type="module" src="/src/web.ts"></script>
   </body>
 </html>

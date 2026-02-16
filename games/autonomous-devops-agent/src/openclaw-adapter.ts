@@ -67,6 +67,11 @@ async function handleRequest(
   const url = new URL(req.url ?? '/', 'http://localhost');
   const path = normalizePath(url.pathname);
 
+  if (method === 'OPTIONS') {
+    writePreflight(res);
+    return;
+  }
+
   if (method === 'GET' && path === '/health') {
     const state = context.getState();
     writeJson(res, 200, {
@@ -455,6 +460,23 @@ async function handleRequest(
     return;
   }
 
+  if (method === 'POST' && path === '/probe/jira') {
+    const body = await readJsonBody(req);
+    const issueId = asString(body.issueId);
+    if (!issueId) {
+      writeJson(res, 400, { error: 'issueId is required' });
+      return;
+    }
+
+    const state = context.getState();
+    const result = await state.runtimeState.runtime.probeTargetsFromJira(issueId, {
+      serviceNowRecordId: asString(body.serviceNowRecordId),
+    });
+
+    writeJson(res, 200, result);
+    return;
+  }
+
   if (method === 'POST' && path === '/runs/pr') {
     const body = await readJsonBody(req);
     const repo = asString(body.repo);
@@ -484,6 +506,24 @@ async function handleRequest(
     return;
   }
 
+  if (method === 'POST' && path === '/probe/pr') {
+    const body = await readJsonBody(req);
+    const repo = asString(body.repo);
+    const prNumber = asString(body.prNumber);
+    if (!repo || !prNumber) {
+      writeJson(res, 400, { error: 'repo and prNumber are required' });
+      return;
+    }
+
+    const state = context.getState();
+    const result = await state.runtimeState.runtime.probeTargetsFromPullRequest(repo, prNumber, {
+      serviceNowRecordId: asString(body.serviceNowRecordId),
+    });
+
+    writeJson(res, 200, result);
+    return;
+  }
+
   writeJson(res, 404, {
     error: 'not_found',
     route: `${method} ${path}`,
@@ -508,6 +548,8 @@ async function handleRequest(
       'POST /schedules/{id}/run-now',
       'POST /runs/jira',
       'POST /runs/pr',
+      'POST /probe/jira',
+      'POST /probe/pr',
     ],
   });
 }
@@ -555,8 +597,21 @@ function normalizePath(pathname: string): string {
 function writeJson(res: ServerResponse, statusCode: number, payload: unknown): void {
   const body = JSON.stringify(payload, null, 2);
   res.statusCode = statusCode;
+  setCorsHeaders(res);
   res.setHeader('Content-Type', 'application/json');
   res.end(body);
+}
+
+function writePreflight(res: ServerResponse): void {
+  res.statusCode = 204;
+  setCorsHeaders(res);
+  res.end();
+}
+
+function setCorsHeaders(res: ServerResponse): void {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {

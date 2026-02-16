@@ -35,6 +35,7 @@ npm run test
 - Durable run queue + autonomous worker loop (OpenClaw-style behavior without OpenClaw install)
 - Cron-based scheduled runs (Jira or PR targets) via scheduler daemon
 - Policy gates for production deployment (`auto` vs `approval`)
+- Multi-target deployment orchestration with source clone, deploy-config clone, binary download, and target-aware apply
 
 ### Quick start (dry-run)
 
@@ -119,6 +120,8 @@ Adapter routes:
 - `POST /schedules/{id}/run-now`
 - `POST /runs/jira` with `{ "issueId": "DEV-123", "serviceNowRecordId": "INC0012345" }`
 - `POST /runs/pr` with `{ "repo": "owner/repo", "prNumber": "42" }`
+- `POST /probe/jira` with `{ "issueId": "DEV-123" }`
+- `POST /probe/pr` with `{ "repo": "owner/repo", "prNumber": "42" }`
 
 If `ADAPTER_ASYNC_QUEUE=true`, `POST /runs/*` also enqueue and return `202`.
 
@@ -140,6 +143,24 @@ npm run worker
 cd games/autonomous-devops-agent
 npm run scheduler
 ```
+
+### Browser UI end-to-end testing
+
+Run the local Ops console in a fourth terminal:
+
+```bash
+cd games/autonomous-devops-agent
+npm run dev
+```
+
+Open the printed Vite URL (typically `http://127.0.0.1:5173`), set adapter base URL to
+`http://127.0.0.1:8790`, then test directly from the browser:
+
+- Probe targets before execution (`Probe Targets` actions)
+- Trigger immediate runs (`Run Now`)
+- Queue work (`Queue`)
+- Review and approve/reject policy gates (`Approvals` panel)
+- Create/toggle/run-now/delete schedules (`Schedules` panel)
 
 Queue a Jira run:
 
@@ -220,6 +241,58 @@ When executor is enabled, each run executes:
 6. `DEPLOY_*_COMMAND` and `VALIDATE_*_COMMAND` for Kubernetes rollout/health validation
 7. Notifications back to Jira/GitHub/ServiceNow
 
+### Multi-target deployment support (Harness-style target families)
+
+This agent can now orchestrate multiple deployment targets per run using:
+
+- `EXECUTOR_CLONE_SOURCE` + `EXECUTOR_SOURCE_*` to clone code into an isolated workspace.
+- `EXECUTOR_CLONE_DEPLOY_CONFIG` + `EXECUTOR_DEPLOY_CONFIG_*` to pull deployment config separately.
+- `EXECUTOR_BINARY_*` to download a release artifact/binary.
+- `EXECUTOR_DEPLOYMENT_TARGETS_JSON` for explicit target matrix.
+- `EXECUTOR_AUTO_DETECT_TARGETS=true` to infer target type from repo layout when JSON is empty.
+
+Supported target types:
+
+- `kubernetes`, `helm`
+- `aws-ecs`, `aws-asg`, `aws-lambda`, `aws-cloudformation`, `aws-codedeploy`, `aws-ami`, `aws-spot`
+- `aks`, `azure-web-app`
+- `gke`, `gcp-cloud-run`
+- `serverless`, `ssh`, `winrm`, `custom`
+
+Example target matrix:
+
+```bash
+export EXECUTOR_DEPLOYMENT_TARGETS_JSON='[
+  {"name":"dev-k8s","type":"kubernetes","environments":["dev"],"manifestPath":"k8s/overlays/dev","namespace":"dev"},
+  {"name":"prod-helm","type":"helm","environments":["prod"],"chartPath":"helm","valuesFile":"helm/values.prod.yaml","releaseName":"platform-service","namespace":"prod"},
+  {"name":"prod-cloud-run","type":"gcp-cloud-run","environments":["prod"],"serviceName":"platform-service","project":"acme-prod","region":"us-central1"}
+]'
+```
+
+Run target probe from chat before execution:
+
+```text
+probe targets jira DEV-123
+probe targets pr owner/repo#42
+```
+
+Preflight checks:
+
+- `EXECUTOR_PREFLIGHT_ENABLED=true` runs tool/auth checks before deployment.
+- `EXECUTOR_PREFLIGHT_AUTH_CHECKS=true` enforces provider auth checks (`aws`, `az`, `gcloud`, `kubectl context`) for relevant targets.
+- Set either to `false` when you intentionally want to bypass strict preflight validation.
+
+Reference for Harness deployment target families:
+
+- [Harness docs: Deploy services on different platforms](https://developer.harness.io/docs/category/deploy-services-on-different-platforms/)
+- [AWS targets](https://developer.harness.io/docs/category/aws/)
+- [Azure targets](https://developer.harness.io/docs/category/azure/)
+- [GCP targets](https://developer.harness.io/docs/category/gcp/)
+- [Kubernetes targets](https://developer.harness.io/docs/category/kubernetes/)
+- [Helm targets](https://developer.harness.io/docs/category/helm/)
+- [SSH and WinRM targets](https://developer.harness.io/docs/category/ssh-and-winrm/)
+- [Serverless targets](https://developer.harness.io/docs/category/serverless/)
+
 ### Harness endpoint contract
 
 - `HARNESS_PUBLISH_URL` request: `{ "action": "publish", "repo": "...", "buildOutput": "..." }`
@@ -232,6 +305,8 @@ When executor is enabled, each run executes:
 
 - `run jira DEV-123`
 - `run pr owner/repo#42`
+- `probe targets jira DEV-123`
+- `probe targets pr owner/repo#42`
 - `snow INC0012345`
 - `auth github`
 - `auth jira`
