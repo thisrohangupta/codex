@@ -24,6 +24,12 @@ export async function runChatTests(): Promise<void> {
   const snow = parseChatCommand('snow INC0012345');
   assertEqual(snow.type, 'set-snow', 'service now command should parse');
 
+  const authGithub = parseChatCommand('auth github');
+  assertEqual(authGithub.type, 'auth', 'auth github command should parse');
+
+  const authStatus = parseChatCommand('auth status');
+  assertEqual(authStatus.type, 'auth-status', 'auth status command should parse');
+
   const unknown = parseChatCommand('run this now');
   assertEqual(unknown.type, 'unknown', 'non-command text should be unknown');
 

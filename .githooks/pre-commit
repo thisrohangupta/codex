@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${SKIP_GITLEAKS:-0}" == "1" ]]; then
+  echo "[gitleaks] SKIP_GITLEAKS=1 set; skipping secret scan."
+  exit 0
+fi
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  cat <<'MSG'
+[gitleaks] gitleaks is required to commit.
+Install it first, then retry:
+  - macOS (Homebrew): brew install gitleaks
+  - Linux (binary): https://github.com/gitleaks/gitleaks/releases
+To bypass one commit (not recommended), run:
+  SKIP_GITLEAKS=1 git commit ...
+MSG
+  exit 1
+fi
+
+echo "[gitleaks] scanning staged changes..."
+if gitleaks help protect >/dev/null 2>&1; then
+  gitleaks protect --staged --redact --verbose
+else
+  # Fallback for older gitleaks versions without `protect`.
+  # Scan only staged content by piping the staged diff to stdin mode.
+  git diff --cached --no-color | gitleaks stdin --redact --verbose
+fi

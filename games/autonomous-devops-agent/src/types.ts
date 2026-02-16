@@ -47,11 +47,20 @@ export interface AgentContext {
   plan: string[];
   generatedCode?: string;
   testReport?: string;
+  buildReport?: string;
+  clusterValidationReport?: string;
   pullRequestId?: string;
   artifact?: string;
   scanResult?: SecurityScanResult;
   deployments: DeploymentResult[];
   reviewNotes: string[];
+}
+
+export interface DeliveryExecutor {
+  runBuild(context: AgentContext): Promise<string>;
+  runTests(context: AgentContext): Promise<string>;
+  deployToCluster(environment: 'dev' | 'prod', context: AgentContext): Promise<string>;
+  validateCluster(environment: 'dev' | 'prod', context: AgentContext): Promise<string>;
 }
 
 export interface LlmProvider {

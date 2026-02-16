@@ -25,13 +25,13 @@ npm run test
 
 ## Autonomous DevOps Agent
 
-### What it does
+### Capabilities
 
-- Accepts chat commands to trigger Jira issue or GitHub PR work.
-- Executes an agent workflow (generate, test, publish, deploy, scan, notify).
-- Streams run/task events in real-time in the chat session.
-- In `live` mode, sends real HTTP requests to Jira, GitHub, Harness, and ServiceNow.
-- In `dry-run` mode, uses in-memory integrations for safe local iteration.
+- Chat-triggered orchestration (`run jira ...`, `run pr ...`)
+- OAuth bootstrap for GitHub and Jira (`auth github`, `auth jira`)
+- Event streaming for task/run lifecycle
+- Real API integrations for Jira, GitHub, Harness, ServiceNow
+- Optional local command execution for build/test/deploy/validate against Kubernetes
 
 ### Quick start (dry-run)
 
@@ -41,26 +41,25 @@ npm install
 npm run chat
 ```
 
-Then try:
+Try:
 
 ```text
 help
 run jira DEV-101
-run pr acme/platform-service#12
-status
 events
+status
 ```
 
 ### Live mode setup
 
-1. Copy and edit environment variables:
+1. Configure environment variables:
 
 ```bash
 cd games/autonomous-devops-agent
 cp .env.example .env
 ```
 
-2. Export the variables (or use your preferred `.env` loader) and run:
+2. Load env vars and start chat:
 
 ```bash
 set -a
@@ -69,29 +68,66 @@ set +a
 npm run chat
 ```
 
-Required in live mode:
+### OAuth setup from chat
 
-- `JIRA_BASE_URL` and Jira auth (`JIRA_BEARER_TOKEN` or `JIRA_EMAIL` + `JIRA_API_TOKEN`)
-- `GITHUB_TOKEN`
-- `HARNESS_API_KEY`, `HARNESS_PUBLISH_URL`, `HARNESS_DEPLOY_URL`, `HARNESS_SCAN_URL`
+Use these commands inside chat:
 
-Optional but supported:
+- `auth github`
+- `auth jira`
+- `auth status`
 
-- `SERVICENOW_*` settings for posting run work notes
+Flow:
 
-Harness endpoint contract used by this agent:
+1. Agent prints an authorization URL.
+2. Open the URL, approve access.
+3. Paste the redirected callback URL (or code) back into chat.
+4. Access token is exchanged and saved to `OAUTH_TOKEN_STORE_PATH` (default: `.agent/oauth-tokens.json`).
 
-- `HARNESS_PUBLISH_URL` receives `{ "action": "publish", "repo": "...", "buildOutput": "..." }`
-- `HARNESS_DEPLOY_URL` receives `{ "action": "deploy", "environment": "dev|prod", "artifact": "..." }`
-- `HARNESS_SCAN_URL` receives `{ "action": "scan", "artifact": "..." }`
-- Response can include `pipelineExecutionId`, `executionId`, `runId`, or `id` (any one is accepted)
-- Scan response should include findings as `{ "critical": 0, "high": 0, "medium": 0, "low": 0 }` or under `findings`
+Live mode automatically reuses stored OAuth tokens for subsequent Jira/GitHub API calls.
+
+### Triggering build, test, deploy, and Kubernetes validation
+
+Set `EXECUTOR_ENABLED=true` and configure command hooks in `.env`:
+
+- `EXECUTOR_WORKDIR`
+- `BUILD_COMMAND`
+- `TEST_COMMAND`
+- `DEPLOY_DEV_COMMAND`
+- `DEPLOY_PROD_COMMAND`
+- `VALIDATE_DEV_COMMAND`
+- `VALIDATE_PROD_COMMAND`
+
+Then run from chat:
+
+- `run jira DEV-123`
+- `run pr owner/repo#42`
+
+When executor is enabled, each run executes:
+
+1. LLM generation + baseline checks
+2. `BUILD_COMMAND`
+3. `TEST_COMMAND`
+4. PR creation/comment sync (GitHub)
+5. Artifact publish + scan + deploy orchestration (Harness if configured)
+6. `DEPLOY_*_COMMAND` and `VALIDATE_*_COMMAND` for Kubernetes rollout/health validation
+7. Notifications back to Jira/GitHub/ServiceNow
+
+### Harness endpoint contract
+
+- `HARNESS_PUBLISH_URL` request: `{ "action": "publish", "repo": "...", "buildOutput": "..." }`
+- `HARNESS_DEPLOY_URL` request: `{ "action": "deploy", "environment": "dev|prod", "artifact": "..." }`
+- `HARNESS_SCAN_URL` request: `{ "action": "scan", "artifact": "..." }`
+- Accepted response run ID keys: `pipelineExecutionId`, `executionId`, `runId`, or `id`
+- Scan response: `{ "critical": 0, "high": 0, "medium": 0, "low": 0 }` (or under `findings`)
 
 ### Chat commands
 
 - `run jira DEV-123`
 - `run pr owner/repo#42`
 - `snow INC0012345`
+- `auth github`
+- `auth jira`
+- `auth status`
 - `status`
 - `events`
 - `help`
@@ -103,4 +139,32 @@ Harness endpoint contract used by this agent:
 cd games/autonomous-devops-agent
 npm run lint
 npm run test
+```
+
+## Secret scanning pre-commit hook (gitleaks)
+
+Install and enable repo hooks:
+
+```bash
+cd /Users/rohangupta/code/codex
+bash scripts/install-git-hooks.sh
+```
+
+What this does:
+
+- Configures `core.hooksPath=.githooks` for this repo.
+- Runs `gitleaks` on staged changes before every commit.
+- Blocks commit if gitleaks is missing or if leaks are detected.
+
+Recommended local secret file pattern:
+
+- Put secrets in `*.local` env files (for example: `.env.secrets.local`).
+- These are already ignored by git (`.env.*.local`) and will not be committed.
+- OAuth token cache is also ignored via `.agent/`.
+
+Manual verification:
+
+```bash
+git config --get core.hooksPath
+git check-ignore -v games/autonomous-devops-agent/.env.secrets.local games/autonomous-devops-agent/.agent/oauth-tokens.json
 ```

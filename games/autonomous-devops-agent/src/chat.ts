@@ -2,6 +2,8 @@ export type ChatCommand =
   | { type: 'help' }
   | { type: 'status' }
   | { type: 'events' }
+  | { type: 'auth'; provider: 'jira' | 'github' }
+  | { type: 'auth-status' }
   | { type: 'exit' }
   | { type: 'run-jira'; issueId: string }
   | { type: 'run-pr'; repo: string; prNumber: string }
@@ -27,8 +29,17 @@ export function parseChatCommand(input: string): ChatCommand {
     return { type: 'events' };
   }
 
+  if (normalized === 'auth status' || normalized === '/auth status') {
+    return { type: 'auth-status' };
+  }
+
   if (['exit', 'quit', '/exit', '/quit'].includes(normalized)) {
     return { type: 'exit' };
+  }
+
+  const authMatch = /^\/?auth\s+(jira|github)$/i.exec(trimmed);
+  if (authMatch) {
+    return { type: 'auth', provider: authMatch[1].toLowerCase() as 'jira' | 'github' };
   }
 
   const snowMatch = /^\/?snow\s+([A-Za-z0-9_-]+)$/i.exec(trimmed);
@@ -67,6 +78,9 @@ export function helpText(): string {
     'Commands:',
     '  help                            Show this help',
     '  status                          Show runtime mode/configuration',
+    '  auth github                     Start GitHub OAuth and persist token',
+    '  auth jira                       Start Jira OAuth and persist token',
+    '  auth status                     Show stored OAuth token status',
     '  events                          Show event history from this chat session',
     '  run jira DEV-123                Fetch Jira issue and execute the agent',
     '  run pr owner/repo#42            Fetch GitHub PR and execute the agent',

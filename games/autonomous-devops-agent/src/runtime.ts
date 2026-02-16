@@ -1,6 +1,7 @@
 import { DevOpsAgent, type DevOpsAgentDependencies } from './agent.js';
 import { describeRuntimeConfig, readRuntimeConfig, type AgentRuntimeConfig, validateLiveConfig } from './config.js';
 import { EventBus } from './event-bus.js';
+import { ShellDeliveryExecutor } from './executor.js';
 import {
   GitHubHttpApi,
   HarnessHttpApi,
@@ -12,6 +13,7 @@ import {
   ServiceNowHttpApi,
 } from './integrations.js';
 import { createLlmProvider } from './llm.js';
+import { hasValidToken, readOAuthTokenStore } from './oauth.js';
 import type { AgentContext, WorkItem } from './types.js';
 
 export interface AgentRuntime {
@@ -96,51 +98,58 @@ class DefaultAgentRuntime implements AgentRuntime {
 export function createAgentRuntime(
   config: AgentRuntimeConfig = readRuntimeConfig(),
 ): AgentRuntime {
-  const missing = validateLiveConfig(config);
+  const effectiveConfig = resolveConfigWithOAuthTokens(config);
+  const missing = validateLiveConfig(effectiveConfig);
   if (missing.length > 0) {
     throw new Error(`Live mode is missing required configuration: ${missing.join(', ')}`);
   }
 
   const eventBus = new EventBus();
+  const executor = createExecutor(effectiveConfig);
 
-  if (config.mode === 'live') {
-    const serviceNow = hasServiceNowConfig(config)
+  if (effectiveConfig.mode === 'live') {
+    const serviceNow = hasServiceNowConfig(effectiveConfig)
       ? new ServiceNowHttpApi({
-          baseUrl: config.serviceNow.baseUrl ?? '',
-          username: config.serviceNow.username,
-          password: config.serviceNow.password,
-          bearerToken: config.serviceNow.bearerToken,
-          table: config.serviceNow.table,
+          baseUrl: effectiveConfig.serviceNow.baseUrl ?? '',
+          username: effectiveConfig.serviceNow.username,
+          password: effectiveConfig.serviceNow.password,
+          bearerToken: effectiveConfig.serviceNow.bearerToken,
+          table: effectiveConfig.serviceNow.table,
         })
       : undefined;
 
+    const harness = hasHarnessConfig(effectiveConfig)
+      ? new HarnessHttpApi({
+          publishUrl: effectiveConfig.harness.publishUrl ?? '',
+          deployUrl: effectiveConfig.harness.deployUrl ?? '',
+          scanUrl: effectiveConfig.harness.scanUrl ?? '',
+          apiKey: effectiveConfig.harness.apiKey ?? '',
+        })
+      : new InMemoryHarnessApi();
+
     const deps: DevOpsAgentDependencies = {
       jira: new JiraHttpApi({
-        baseUrl: config.jira.baseUrl ?? '',
-        email: config.jira.email,
-        apiToken: config.jira.apiToken,
-        bearerToken: config.jira.bearerToken,
-        defaultRepo: config.defaultRepo,
-        defaultBranch: config.defaultBranch,
-        defaultServiceNowRecordId: config.serviceNow.defaultRecordId,
+        baseUrl: effectiveConfig.jira.baseUrl ?? '',
+        email: effectiveConfig.jira.email,
+        apiToken: effectiveConfig.jira.apiToken,
+        bearerToken: effectiveConfig.jira.bearerToken,
+        defaultRepo: effectiveConfig.defaultRepo,
+        defaultBranch: effectiveConfig.defaultBranch,
+        defaultServiceNowRecordId: effectiveConfig.serviceNow.defaultRecordId,
       }),
       repo: new GitHubHttpApi({
-        baseUrl: config.github.baseUrl,
-        token: config.github.token ?? '',
-        defaultBaseBranch: config.github.defaultBaseBranch,
+        baseUrl: effectiveConfig.github.baseUrl,
+        token: effectiveConfig.github.token ?? '',
+        defaultBaseBranch: effectiveConfig.github.defaultBaseBranch,
       }),
-      harness: new HarnessHttpApi({
-        publishUrl: config.harness.publishUrl ?? '',
-        deployUrl: config.harness.deployUrl ?? '',
-        scanUrl: config.harness.scanUrl ?? '',
-        apiKey: config.harness.apiKey ?? '',
-      }),
-      llm: createLlmProvider(config.llm),
+      harness,
+      llm: createLlmProvider(effectiveConfig.llm),
       serviceNow,
+      executor,
       eventBus,
     };
 
-    return new DefaultAgentRuntime(config, eventBus, deps);
+    return new DefaultAgentRuntime(effectiveConfig, eventBus, deps);
   }
 
   const seedIssue: WorkItem = {
@@ -148,17 +157,18 @@ export function createAgentRuntime(
     kind: 'jira',
     title: 'Add progressive delivery strategy',
     body: 'Implement canary and rollback support',
-    repo: config.defaultRepo,
-    branch: config.defaultBranch,
-    serviceNowRecordId: config.serviceNow.defaultRecordId,
+    repo: effectiveConfig.defaultRepo,
+    branch: effectiveConfig.defaultBranch,
+    serviceNowRecordId: effectiveConfig.serviceNow.defaultRecordId,
   };
 
-  return new DefaultAgentRuntime(config, eventBus, {
+  return new DefaultAgentRuntime(effectiveConfig, eventBus, {
     jira: new InMemoryJiraApi({ [seedIssue.id]: seedIssue }),
     repo: new InMemoryRepoApi(),
     harness: new InMemoryHarnessApi(),
     llm: createLlmProvider({ provider: 'oss' }),
     serviceNow: new InMemoryServiceNowApi(),
+    executor,
     eventBus,
   });
 }
@@ -171,4 +181,52 @@ function hasServiceNowConfig(config: AgentRuntimeConfig): boolean {
   const hasBearer = Boolean(config.serviceNow.bearerToken);
   const hasBasic = Boolean(config.serviceNow.username && config.serviceNow.password);
   return hasBearer || hasBasic;
+}
+
+function hasHarnessConfig(config: AgentRuntimeConfig): boolean {
+  return Boolean(
+    config.harness.apiKey &&
+      config.harness.publishUrl &&
+      config.harness.deployUrl &&
+      config.harness.scanUrl,
+  );
+}
+
+function createExecutor(config: AgentRuntimeConfig): ShellDeliveryExecutor | undefined {
+  if (!config.execution.enabled) {
+    return undefined;
+  }
+
+  return new ShellDeliveryExecutor({
+    workdir: config.execution.workdir,
+    buildCommand: config.execution.buildCommand,
+    testCommand: config.execution.testCommand,
+    deployDevCommand: config.execution.deployDevCommand,
+    deployProdCommand: config.execution.deployProdCommand,
+    validateDevCommand: config.execution.validateDevCommand,
+    validateProdCommand: config.execution.validateProdCommand,
+  });
+}
+
+function resolveConfigWithOAuthTokens(config: AgentRuntimeConfig): AgentRuntimeConfig {
+  const store = readOAuthTokenStore(config);
+  const merged: AgentRuntimeConfig = {
+    ...config,
+    jira: { ...config.jira },
+    github: { ...config.github },
+  };
+
+  if (!merged.github.token && hasValidToken(store.github)) {
+    merged.github.token = store.github?.accessToken;
+  }
+
+  if (!merged.jira.bearerToken && hasValidToken(store.jira)) {
+    merged.jira.bearerToken = store.jira?.accessToken;
+  }
+
+  if (!merged.jira.baseUrl && store.jira?.siteUrl) {
+    merged.jira.baseUrl = store.jira.siteUrl;
+  }
+
+  return merged;
 }

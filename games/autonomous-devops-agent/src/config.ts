@@ -31,6 +31,33 @@ export interface ServiceNowRuntimeConfig {
   defaultRecordId?: string;
 }
 
+export interface OAuthProviderRuntimeConfig {
+  clientId?: string;
+  clientSecret?: string;
+  redirectUri: string;
+  scopes: string[];
+  authorizeUrl: string;
+  tokenUrl: string;
+  audience?: string;
+}
+
+export interface OAuthRuntimeConfig {
+  tokenStorePath: string;
+  github: OAuthProviderRuntimeConfig;
+  jira: OAuthProviderRuntimeConfig;
+}
+
+export interface ExecutionRuntimeConfig {
+  enabled: boolean;
+  workdir: string;
+  buildCommand: string;
+  testCommand: string;
+  deployDevCommand: string;
+  deployProdCommand: string;
+  validateDevCommand: string;
+  validateProdCommand: string;
+}
+
 export interface AgentRuntimeConfig {
   mode: RuntimeMode;
   defaultRepo: string;
@@ -39,6 +66,8 @@ export interface AgentRuntimeConfig {
   github: GitHubRuntimeConfig;
   harness: HarnessRuntimeConfig;
   serviceNow: ServiceNowRuntimeConfig;
+  oauth: OAuthRuntimeConfig;
+  execution: ExecutionRuntimeConfig;
   llm: ApiKeyConfig;
 }
 
@@ -76,6 +105,46 @@ export function readRuntimeConfig(
       table: env.SERVICENOW_TABLE ?? 'incident',
       defaultRecordId: env.SERVICENOW_RECORD_ID,
     },
+    oauth: {
+      tokenStorePath: env.OAUTH_TOKEN_STORE_PATH ?? '.agent/oauth-tokens.json',
+      github: {
+        clientId: env.GITHUB_OAUTH_CLIENT_ID,
+        clientSecret: env.GITHUB_OAUTH_CLIENT_SECRET,
+        redirectUri: env.GITHUB_OAUTH_REDIRECT_URI ?? 'http://localhost:8787/callback',
+        scopes: parseScopes(env.GITHUB_OAUTH_SCOPES, ['repo', 'read:user']),
+        authorizeUrl: env.GITHUB_OAUTH_AUTHORIZE_URL ?? 'https://github.com/login/oauth/authorize',
+        tokenUrl: env.GITHUB_OAUTH_TOKEN_URL ?? 'https://github.com/login/oauth/access_token',
+      },
+      jira: {
+        clientId: env.JIRA_OAUTH_CLIENT_ID,
+        clientSecret: env.JIRA_OAUTH_CLIENT_SECRET,
+        redirectUri: env.JIRA_OAUTH_REDIRECT_URI ?? 'http://localhost:8787/callback',
+        scopes: parseScopes(env.JIRA_OAUTH_SCOPES, [
+          'read:jira-work',
+          'write:jira-work',
+          'offline_access',
+          'read:me',
+        ]),
+        authorizeUrl: env.JIRA_OAUTH_AUTHORIZE_URL ?? 'https://auth.atlassian.com/authorize',
+        tokenUrl: env.JIRA_OAUTH_TOKEN_URL ?? 'https://auth.atlassian.com/oauth/token',
+        audience: env.JIRA_OAUTH_AUDIENCE ?? 'api.atlassian.com',
+      },
+    },
+    execution: {
+      enabled: parseBoolean(env.EXECUTOR_ENABLED),
+      workdir: env.EXECUTOR_WORKDIR ?? process.cwd(),
+      buildCommand: env.BUILD_COMMAND ?? 'npm run build',
+      testCommand: env.TEST_COMMAND ?? 'npm test',
+      deployDevCommand: env.DEPLOY_DEV_COMMAND ?? 'kubectl apply -f k8s/',
+      deployProdCommand:
+        env.DEPLOY_PROD_COMMAND ?? 'kubectl apply -f k8s/',
+      validateDevCommand:
+        env.VALIDATE_DEV_COMMAND ??
+        'kubectl rollout status deployment/${K8S_DEPLOYMENT:-app} -n ${K8S_DEV_NAMESPACE:-default} --timeout=180s',
+      validateProdCommand:
+        env.VALIDATE_PROD_COMMAND ??
+        'kubectl rollout status deployment/${K8S_DEPLOYMENT:-app} -n ${K8S_PROD_NAMESPACE:-prod} --timeout=180s',
+    },
     llm: {
       provider: asProvider(env.LLM_PROVIDER),
       apiKey: env.LLM_API_KEY,
@@ -105,17 +174,23 @@ export function validateLiveConfig(config: AgentRuntimeConfig): string[] {
     missing.push('GITHUB_TOKEN');
   }
 
-  if (!config.harness.apiKey) {
-    missing.push('HARNESS_API_KEY');
+  if (!config.execution.enabled) {
+    if (!config.harness.apiKey) {
+      missing.push('HARNESS_API_KEY');
+    }
+    if (!config.harness.publishUrl) {
+      missing.push('HARNESS_PUBLISH_URL');
+    }
+    if (!config.harness.deployUrl) {
+      missing.push('HARNESS_DEPLOY_URL');
+    }
+    if (!config.harness.scanUrl) {
+      missing.push('HARNESS_SCAN_URL');
+    }
   }
-  if (!config.harness.publishUrl) {
-    missing.push('HARNESS_PUBLISH_URL');
-  }
-  if (!config.harness.deployUrl) {
-    missing.push('HARNESS_DEPLOY_URL');
-  }
-  if (!config.harness.scanUrl) {
-    missing.push('HARNESS_SCAN_URL');
+
+  if (config.execution.enabled && !config.execution.workdir) {
+    missing.push('EXECUTOR_WORKDIR');
   }
 
   return missing;
@@ -136,6 +211,12 @@ export function describeRuntimeConfig(config: AgentRuntimeConfig): string[] {
     `servicenow=${config.serviceNow.baseUrl && hasServiceNowAuth ? 'configured' : 'not configured'}`,
   );
 
+  const hasGithubOAuth = Boolean(config.oauth.github.clientId && config.oauth.github.clientSecret);
+  const hasJiraOAuth = Boolean(config.oauth.jira.clientId && config.oauth.jira.clientSecret);
+  lines.push(`oauth.github=${hasGithubOAuth ? 'configured' : 'not configured'}`);
+  lines.push(`oauth.jira=${hasJiraOAuth ? 'configured' : 'not configured'}`);
+  lines.push(`executor=${config.execution.enabled ? `enabled (${config.execution.workdir})` : 'disabled'}`);
+
   lines.push(`llm=${config.llm.provider}${config.llm.model ? ` (${config.llm.model})` : ''}`);
   return lines;
 }
@@ -145,4 +226,24 @@ function asProvider(value: string | undefined): ApiKeyConfig['provider'] {
     return value;
   }
   return 'oss';
+}
+
+function parseScopes(value: string | undefined, fallback: string[]): string[] {
+  if (!value?.trim()) {
+    return fallback;
+  }
+
+  return value
+    .split(',')
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+}
+
+function parseBoolean(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 }

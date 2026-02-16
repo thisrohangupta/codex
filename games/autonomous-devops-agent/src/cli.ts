@@ -1,11 +1,22 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
+import { readRuntimeConfig, type AgentRuntimeConfig } from './config.js';
 import { helpText, parseChatCommand } from './chat.js';
-import { createAgentRuntime } from './runtime.js';
+import {
+  beginOAuthAuthorization,
+  completeOAuthAuthorization,
+  hasValidToken,
+  maskToken,
+  readOAuthTokenStore,
+  resolveTokenStorePath,
+  saveOAuthToken,
+} from './oauth.js';
+import { createAgentRuntime, type AgentRuntime } from './runtime.js';
 import type { AgentContext, AgentEvent } from './types.js';
 
 async function main(): Promise<void> {
-  const runtime = createAgentRuntime();
+  let runtimeState = initializeRuntime(readRuntimeConfig());
+  let runtime = runtimeState.runtime;
   const rl = createInterface({ input, output, terminal: true });
 
   let defaultServiceNowRecordId: string | undefined = runtime.config.serviceNow.defaultRecordId;
@@ -13,6 +24,9 @@ async function main(): Promise<void> {
   output.write('Autonomous DevOps Agent Chat\n');
   output.write('Type help for commands.\n\n');
   output.write(`${runtime.describe().join('\n')}\n`);
+  if (runtimeState.warning) {
+    output.write(`warning=${runtimeState.warning}\n`);
+  }
   if (defaultServiceNowRecordId) {
     output.write(`activeServiceNowRecord=${defaultServiceNowRecordId}\n`);
   }
@@ -33,7 +47,27 @@ async function main(): Promise<void> {
 
       if (command.type === 'status') {
         output.write(`${runtime.describe().join('\n')}\n`);
+        if (runtimeState.warning) {
+          output.write(`warning=${runtimeState.warning}\n`);
+        }
         output.write(`activeServiceNowRecord=${defaultServiceNowRecordId ?? 'none'}\n`);
+        continue;
+      }
+
+      if (command.type === 'auth-status') {
+        output.write(`${formatOAuthStatus(runtime.config)}\n`);
+        continue;
+      }
+
+      if (command.type === 'auth') {
+        await runOAuthFlow(command.provider, runtime.config, rl);
+        runtimeState = initializeRuntime(readRuntimeConfig());
+        runtime = runtimeState.runtime;
+        output.write(
+          runtimeState.warning
+            ? `Runtime fallback active: ${runtimeState.warning}\n`
+            : 'Runtime credentials reloaded from environment + OAuth token store.\n',
+        );
         continue;
       }
 
@@ -88,6 +122,68 @@ async function main(): Promise<void> {
   output.write('Session ended.\n');
 }
 
+async function runOAuthFlow(
+  provider: 'jira' | 'github',
+  config: ReturnType<typeof readRuntimeConfig>,
+  rl: ReturnType<typeof createInterface>,
+): Promise<void> {
+  const request = beginOAuthAuthorization(provider, config);
+
+  output.write(`Open this URL in your browser to authorize ${provider}:\n${request.authorizationUrl}\n`);
+  const callback = await rl.question(
+    'Paste the redirected callback URL (or just the authorization code): ',
+  );
+
+  const token = await completeOAuthAuthorization(request, callback, config);
+  saveOAuthToken(provider, token, config);
+
+  output.write(
+    `Saved ${provider} access token (${maskToken(token.accessToken)}) at ${resolveTokenStorePath(config.oauth.tokenStorePath)}\n`,
+  );
+  if (provider === 'jira') {
+    output.write(`Detected Jira site URL: ${token.siteUrl ?? 'not detected'}\n`);
+  }
+}
+
+function formatOAuthStatus(config: ReturnType<typeof readRuntimeConfig>): string {
+  const store = readOAuthTokenStore(config);
+  const lines = [`tokenStore=${resolveTokenStorePath(config.oauth.tokenStorePath)}`];
+
+  lines.push(formatProviderStatus('github', store.github));
+  lines.push(formatProviderStatus('jira', store.jira));
+
+  if (store.jira?.siteUrl) {
+    lines.push(`jira.siteUrl=${store.jira.siteUrl}`);
+  }
+
+  return lines.join('\n');
+}
+
+function formatProviderStatus(
+  provider: 'github' | 'jira',
+  token: ReturnType<typeof readOAuthTokenStore>['github'],
+): string {
+  if (!token) {
+    return `${provider}=missing`;
+  }
+
+  const validity = hasValidToken(token) ? 'valid' : 'expired';
+  return `${provider}=${validity} (${maskToken(token.accessToken)})`;
+}
+
+function initializeRuntime(config: AgentRuntimeConfig): { runtime: AgentRuntime; warning?: string } {
+  try {
+    return { runtime: createAgentRuntime(config) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown runtime configuration failure';
+    const fallback = createAgentRuntime({ ...config, mode: 'dry-run' });
+    return {
+      runtime: fallback,
+      warning: `Live runtime unavailable: ${message}. Running in dry-run mode until configuration is complete.`,
+    };
+  }
+}
+
 async function executeWithEventStreaming(
   fn: () => Promise<AgentContext>,
   runtime: ReturnType<typeof createAgentRuntime>,
@@ -119,8 +215,11 @@ function summarizeRun(context: AgentContext): string {
     .join(', ');
 
   const notes = context.reviewNotes.length > 0 ? ` review=${context.reviewNotes.join(' | ')}` : '';
+  const validation = context.clusterValidationReport
+    ? ` clusterValidation=${context.clusterValidationReport.replace(/\n/g, ' | ')}`
+    : '';
 
-  return `Run ${context.runId} status=${context.status} deployments=[${deployments || 'none'}]${notes}`;
+  return `Run ${context.runId} status=${context.status} deployments=[${deployments || 'none'}]${notes}${validation}`;
 }
 
 function formatEvent(event: AgentEvent): string {

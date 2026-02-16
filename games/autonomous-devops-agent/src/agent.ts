@@ -1,5 +1,6 @@
 import { EventBus } from './event-bus.js';
 import type {
+  DeliveryExecutor,
   HarnessApi,
   JiraApi,
   LlmProvider,
@@ -15,6 +16,7 @@ export interface DevOpsAgentDependencies {
   harness: HarnessApi;
   llm: LlmProvider;
   serviceNow?: ServiceNowApi;
+  executor?: DeliveryExecutor;
   eventBus?: EventBus;
 }
 
@@ -33,6 +35,7 @@ export class DevOpsAgent {
   }
 
   async run(input: WorkItem): Promise<AgentContext> {
+    const executor = this.deps.executor;
     const context: AgentContext = {
       runId: `${input.kind}-${input.id}-${Date.now()}`,
       workItem: input,
@@ -65,6 +68,17 @@ export class DevOpsAgent {
       context.testReport = this.runTests(context.generatedCode ?? '');
     });
 
+    if (executor) {
+      await this.executeTask(context, 'build-local', async () => {
+        context.buildReport = await executor.runBuild(context);
+      });
+
+      await this.executeTask(context, 'test-local', async () => {
+        const report = await executor.runTests(context);
+        context.testReport = [context.testReport, report].filter(Boolean).join('\n');
+      });
+    }
+
     if (input.kind === 'jira') {
       await this.executeTask(context, 'open-pr', async () => {
         context.pullRequestId = await this.deps.repo.openPullRequest(
@@ -90,6 +104,22 @@ export class DevOpsAgent {
       context.deployments.push(deployment);
     });
 
+    if (executor) {
+      await this.executeTask(context, 'deploy-dev-local', async () => {
+        const output = await executor.deployToCluster('dev', context);
+        context.clusterValidationReport = [context.clusterValidationReport, output]
+          .filter(Boolean)
+          .join('\n');
+      });
+
+      await this.executeTask(context, 'validate-dev-local', async () => {
+        const output = await executor.validateCluster('dev', context);
+        context.clusterValidationReport = [context.clusterValidationReport, output]
+          .filter(Boolean)
+          .join('\n');
+      });
+    }
+
     await this.executeTask(context, 'scan', async () => {
       context.scanResult = await this.deps.harness.scanImage(context.artifact ?? '');
       const critical = context.scanResult.critical;
@@ -106,6 +136,23 @@ export class DevOpsAgent {
         const deployment = await this.deps.harness.deploy('prod', context.artifact ?? '');
         context.deployments.push(deployment);
       });
+
+      if (executor) {
+        await this.executeTask(context, 'deploy-prod-local', async () => {
+          const output = await executor.deployToCluster('prod', context);
+          context.clusterValidationReport = [context.clusterValidationReport, output]
+            .filter(Boolean)
+            .join('\n');
+        });
+
+        await this.executeTask(context, 'validate-prod-local', async () => {
+          const output = await executor.validateCluster('prod', context);
+          context.clusterValidationReport = [context.clusterValidationReport, output]
+            .filter(Boolean)
+            .join('\n');
+        });
+      }
+
       this.updateStatus(context, 'succeeded');
     } else {
       this.updateStatus(context, 'needs_review');
@@ -129,21 +176,25 @@ export class DevOpsAgent {
       context.status === 'needs_review'
         ? `Run ${context.runId} requires review. ${context.reviewNotes.join(' | ')}`
         : `Run ${context.runId} completed and was deployed to dev/prod.`;
+    const validationMessage = context.clusterValidationReport
+      ? ` Cluster validation: ${context.clusterValidationReport}`
+      : '';
+    const fullMessage = `${message}${validationMessage}`;
 
     if (context.workItem.kind === 'jira') {
-      await this.deps.jira.comment(context.workItem.id, message);
+      await this.deps.jira.comment(context.workItem.id, fullMessage);
     }
 
     if (context.pullRequestId) {
       await this.deps.repo.postPullRequestComment(
         context.workItem.repo,
         context.pullRequestId,
-        message,
+        fullMessage,
       );
     }
 
     if (this.deps.serviceNow && context.workItem.serviceNowRecordId) {
-      await this.deps.serviceNow.appendWorkNote(context.workItem.serviceNowRecordId, message);
+      await this.deps.serviceNow.appendWorkNote(context.workItem.serviceNowRecordId, fullMessage);
     }
   }
 
