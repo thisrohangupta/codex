@@ -5,13 +5,12 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "jsx": "react-jsx",
+    "types": ["node"],
     "allowJs": false,
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "outDir": "dist",
-    "types": ["vitest/globals"]
+    "outDir": "dist"
   },
   "include": ["src/**/*", "tests/**/*"]
 }
-

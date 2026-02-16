@@ -1,5 +1,5 @@
 {
-  "name": "tron-chess",
+  "name": "autonomous-devops-agent",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,14 +7,14 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 5174",
-    "lint": "eslint src tests --ext .ts",
+    "chat": "tsc --project tsconfig.json && node dist/src/cli.js",
+    "lint": "tsc --noEmit",
     "fmt": "prettier src tests --write",
-    "test": "vitest run"
+    "test": "tsc --project tsconfig.json && node dist/tests/run.js"
   },
-  "dependencies": {
-    "chess.js": "^1.0.0"
-  },
+  "dependencies": {},
   "devDependencies": {
+    "@types/node": "^22.10.2",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.56.0",
@@ -24,4 +24,3 @@
     "vitest": "^1.0.0"
   }
 }
-
