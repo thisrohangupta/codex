@@ -27,6 +27,8 @@
         <div class="field-row">
           <label for="baseUrlInput">Base URL</label>
           <input id="baseUrlInput" type="url" placeholder="http://127.0.0.1:8790" />
+          <label for="apiKeyInput">API Key</label>
+          <input id="apiKeyInput" type="password" placeholder="optional / required if adapter auth enabled" />
           <button id="connectBtn" type="button">Connect</button>
           <button id="refreshAllBtn" type="button">Refresh All</button>
         </div>
@@ -103,6 +105,7 @@
           <div class="panel-head">
             <h2>Queue</h2>
             <button id="refreshQueueBtn" type="button">Refresh</button>
+            <button id="reapQueueBtn" type="button">Reap Expired</button>
           </div>
           <div class="table-wrap">
             <table>
@@ -113,10 +116,11 @@
                   <th>Type</th>
                   <th>Attempts</th>
                   <th>Result</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="queueBody">
-                <tr><td colspan="5" class="empty">No queue items loaded</td></tr>
+                <tr><td colspan="6" class="empty">No queue items loaded</td></tr>
               </tbody>
             </table>
           </div>

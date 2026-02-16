@@ -33,8 +33,10 @@ npm run test
 - Real API integrations for Jira, GitHub, Harness, ServiceNow
 - Optional local command execution for build/test/deploy/validate against Kubernetes
 - Durable run queue + autonomous worker loop (OpenClaw-style behavior without OpenClaw install)
+- Optional PostgreSQL-backed queue/approvals/schedules (with worker leases + reaper)
 - Cron-based scheduled runs (Jira or PR targets) via scheduler daemon
 - Policy gates for production deployment (`auto` vs `approval`)
+- Adapter API-key auth + RBAC (`viewer`, `operator`, `approver`, `admin`)
 - Multi-target deployment orchestration with source clone, deploy-config clone, binary download, and target-aware apply
 
 ### Quick start (dry-run)
@@ -108,6 +110,10 @@ Adapter routes:
 - `GET /queue/{id}`
 - `POST /queue/jira`
 - `POST /queue/pr`
+- `POST /queue/{id}/cancel`
+- `POST /queue/{id}/retry`
+- `POST /queue/{id}/timeout`
+- `POST /queue/reap`
 - `GET /approvals`
 - `GET /approvals/{id}`
 - `POST /approvals/{id}/approve`
@@ -124,6 +130,18 @@ Adapter routes:
 - `POST /probe/pr` with `{ "repo": "owner/repo", "prNumber": "42" }`
 
 If `ADAPTER_ASYNC_QUEUE=true`, `POST /runs/*` also enqueue and return `202`.
+
+RBAC when `ADAPTER_AUTH_MODE=api-key`:
+
+- `viewer`: read-only routes (`/runtime`, `/events`, `/queue`, `/approvals`, `/schedules`)
+- `operator`: queue runs/schedules, queue controls, run/probe routes
+- `approver`: approval decisions (`/approvals/{id}/approve|reject`)
+- `admin`: runtime reload + manual `/queue/reap` (also inherits all lower privileges)
+
+Pass credentials as either:
+
+- `X-API-Key: <key>`
+- `Authorization: Bearer <key>`
 
 ### Standalone autonomous mode (no OpenClaw required)
 
@@ -154,11 +172,12 @@ npm run dev
 ```
 
 Open the printed Vite URL (typically `http://127.0.0.1:5173`), set adapter base URL to
-`http://127.0.0.1:8790`, then test directly from the browser:
+`http://127.0.0.1:8790` (and API key if auth is enabled), then test directly from the browser:
 
 - Probe targets before execution (`Probe Targets` actions)
 - Trigger immediate runs (`Run Now`)
 - Queue work (`Queue`)
+- Cancel/retry/force-timeout queue items + trigger reaper (`Queue` panel)
 - Review and approve/reject policy gates (`Approvals` panel)
 - Create/toggle/run-now/delete schedules (`Schedules` panel)
 
@@ -166,6 +185,7 @@ Queue a Jira run:
 
 ```bash
 curl -X POST http://127.0.0.1:8790/queue/jira \\
+  -H 'x-api-key: <operator-or-admin-key>' \\
   -H 'content-type: application/json' \\
   -d '{"issueId":"DEV-123","serviceNowRecordId":"INC0012345"}'
 ```
@@ -173,13 +193,34 @@ curl -X POST http://127.0.0.1:8790/queue/jira \\
 Inspect queue:
 
 ```bash
-curl http://127.0.0.1:8790/queue
+curl -H 'x-api-key: <viewer-or-higher-key>' http://127.0.0.1:8790/queue
+```
+
+Queue controls:
+
+```bash
+curl -X POST http://127.0.0.1:8790/queue/<queue-id>/cancel \
+  -H 'x-api-key: <operator-or-admin-key>' \
+  -H 'content-type: application/json' \
+  -d '{"reason":"manual cancel"}'
+
+curl -X POST http://127.0.0.1:8790/queue/<queue-id>/retry \
+  -H 'x-api-key: <operator-or-admin-key>'
+
+curl -X POST http://127.0.0.1:8790/queue/<queue-id>/timeout \
+  -H 'x-api-key: <operator-or-admin-key>' \
+  -H 'content-type: application/json' \
+  -d '{"reason":"forced timeout"}'
+
+curl -X POST http://127.0.0.1:8790/queue/reap \
+  -H 'x-api-key: <admin-key>'
 ```
 
 Create a cron schedule (every 30 minutes):
 
 ```bash
 curl -X POST http://127.0.0.1:8790/schedules \
+  -H 'x-api-key: <operator-or-admin-key>' \
   -H 'content-type: application/json' \
   -d '{"name":"sync-dev-123","cron":"*/30 * * * *","type":"jira","issueId":"DEV-123"}'
 ```
@@ -187,8 +228,8 @@ curl -X POST http://127.0.0.1:8790/schedules \
 Inspect schedules and approvals:
 
 ```bash
-curl http://127.0.0.1:8790/schedules
-curl http://127.0.0.1:8790/approvals
+curl -H 'x-api-key: <viewer-or-higher-key>' http://127.0.0.1:8790/schedules
+curl -H 'x-api-key: <viewer-or-higher-key>' http://127.0.0.1:8790/approvals
 ```
 
 ### Policy gates (auto vs human approval)
@@ -203,9 +244,27 @@ When policy mode is `approval`, run outcomes become `needs_review` with note
 
 ```bash
 curl -X POST http://127.0.0.1:8790/approvals/<approval-id>/approve \
+  -H 'x-api-key: <approver-or-admin-key>' \
   -H 'content-type: application/json' \
   -d '{"approvedBy":"architect"}'
 ```
+
+### Datastore backend (file vs PostgreSQL)
+
+Default backend is file-based (`.agent/*.json`). To run with PostgreSQL:
+
+```bash
+export DATASTORE_DRIVER=postgres
+export DATABASE_URL='postgres://localhost:5432/autonomous_devops'
+export DATABASE_SCHEMA=public
+```
+
+Worker durability controls:
+
+- `QUEUE_LEASE_MS`: lease duration per claimed run
+- `QUEUE_HEARTBEAT_INTERVAL_MS`: worker heartbeat cadence
+- `QUEUE_RUN_TIMEOUT_MS`: max run runtime (set `0` to disable timeout reaping)
+- `QUEUE_REAP_INTERVAL_MS`: how often worker reaps expired leases/timeouts
 
 ### Optional OpenClaw bridge
 

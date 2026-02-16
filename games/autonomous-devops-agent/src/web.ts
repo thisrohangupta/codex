@@ -31,20 +31,24 @@ interface ScheduleItem {
 
 interface UiState {
   baseUrl: string;
+  apiKey: string;
   autoRefresh: boolean;
   timer?: ReturnType<typeof setInterval>;
   recentOutputs: string[];
 }
 
-const STORAGE_KEY = 'agentic-devops-ui.base-url';
+const BASE_URL_STORAGE_KEY = 'agentic-devops-ui.base-url';
+const API_KEY_STORAGE_KEY = 'agentic-devops-ui.api-key';
 
 const state: UiState = {
-  baseUrl: localStorage.getItem(STORAGE_KEY) ?? 'http://127.0.0.1:8790',
+  baseUrl: localStorage.getItem(BASE_URL_STORAGE_KEY) ?? 'http://127.0.0.1:8790',
+  apiKey: localStorage.getItem(API_KEY_STORAGE_KEY) ?? '',
   autoRefresh: true,
   recentOutputs: [],
 };
 
 const baseUrlInput = byId<HTMLInputElement>('baseUrlInput');
+const apiKeyInput = byId<HTMLInputElement>('apiKeyInput');
 const healthBadge = byId<HTMLSpanElement>('healthBadge');
 const autoRefreshToggle = byId<HTMLInputElement>('autoRefreshToggle');
 const outputArea = byId<HTMLPreElement>('outputArea');
@@ -73,10 +77,11 @@ init();
 
 function init(): void {
   baseUrlInput.value = state.baseUrl;
+  apiKeyInput.value = state.apiKey;
   autoRefreshToggle.checked = state.autoRefresh;
 
   byId<HTMLButtonElement>('connectBtn').addEventListener('click', async () => {
-    applyBaseUrl();
+    applyConnectionSettings();
     await refreshAll();
   });
   byId<HTMLButtonElement>('refreshAllBtn').addEventListener('click', refreshAll);
@@ -95,6 +100,7 @@ function init(): void {
   byId<HTMLButtonElement>('probePrBtn').addEventListener('click', () => runOrQueuePr('probe'));
 
   byId<HTMLButtonElement>('refreshQueueBtn').addEventListener('click', refreshQueue);
+  byId<HTMLButtonElement>('reapQueueBtn').addEventListener('click', reapQueue);
   byId<HTMLButtonElement>('refreshApprovalsBtn').addEventListener('click', refreshApprovals);
   byId<HTMLButtonElement>('refreshSchedulesBtn').addEventListener('click', refreshSchedules);
 
@@ -107,6 +113,7 @@ function init(): void {
   scheduleForm.addEventListener('submit', createSchedule);
 
   approvalsBody.addEventListener('click', handleApprovalAction);
+  queueBody.addEventListener('click', handleQueueAction);
   schedulesBody.addEventListener('click', handleScheduleAction);
 
   renderScheduleTargetFields();
@@ -129,14 +136,17 @@ function refreshTimerState(): void {
   }, 5000);
 }
 
-function applyBaseUrl(): void {
+function applyConnectionSettings(): void {
   state.baseUrl = normalizeBaseUrl(baseUrlInput.value);
+  state.apiKey = apiKeyInput.value.trim();
   baseUrlInput.value = state.baseUrl;
-  localStorage.setItem(STORAGE_KEY, state.baseUrl);
+  apiKeyInput.value = state.apiKey;
+  localStorage.setItem(BASE_URL_STORAGE_KEY, state.baseUrl);
+  localStorage.setItem(API_KEY_STORAGE_KEY, state.apiKey);
 }
 
 async function refreshAll(): Promise<void> {
-  applyBaseUrl();
+  applyConnectionSettings();
   const tasks = [refreshHealth(), refreshQueue(), refreshApprovals(), refreshSchedules()];
   await Promise.all(tasks.map((task) => task.catch((error) => appendOutput('Refresh Error', { error: asError(error) }))));
 }
@@ -164,7 +174,13 @@ async function refreshQueue(): Promise<void> {
   const items = asArray(payload.items).map(asQueueItem);
   queueBody.innerHTML = items.length > 0
     ? items.map(renderQueueRow).join('')
-    : `<tr><td colspan="5" class="empty">No queue items loaded</td></tr>`;
+    : `<tr><td colspan="6" class="empty">No queue items loaded</td></tr>`;
+}
+
+async function reapQueue(): Promise<void> {
+  const payload = await requestJson<UnknownRecord>('/queue/reap', { method: 'POST' });
+  appendOutput('Queue Reaper', payload);
+  await refreshQueue();
 }
 
 async function refreshApprovals(): Promise<void> {
@@ -320,6 +336,49 @@ async function handleApprovalAction(event: Event): Promise<void> {
   }
 }
 
+async function handleQueueAction(event: Event): Promise<void> {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const action = target.dataset.action;
+  const id = target.dataset.id;
+  if (!action || !id) {
+    return;
+  }
+
+  if (action === 'cancel') {
+    const reason = window.prompt('Cancellation reason:', 'Canceled from UI')?.trim();
+    const payload = await requestJson<UnknownRecord>(`/queue/${encodeURIComponent(id)}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason || 'Canceled from UI' }),
+    });
+    appendOutput('Queue Canceled', payload);
+    await refreshQueue();
+    return;
+  }
+
+  if (action === 'retry') {
+    const payload = await requestJson<UnknownRecord>(`/queue/${encodeURIComponent(id)}/retry`, {
+      method: 'POST',
+    });
+    appendOutput('Queue Retried', payload);
+    await refreshQueue();
+    return;
+  }
+
+  if (action === 'timeout') {
+    const reason = window.prompt('Timeout reason:', 'Force-timeout from UI')?.trim();
+    const payload = await requestJson<UnknownRecord>(`/queue/${encodeURIComponent(id)}/timeout`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason || 'Force-timeout from UI' }),
+    });
+    appendOutput('Queue Timed Out', payload);
+    await refreshQueue();
+  }
+}
+
 async function handleScheduleAction(event: Event): Promise<void> {
   const target = event.target;
   if (!(target instanceof HTMLButtonElement)) {
@@ -366,6 +425,28 @@ async function handleScheduleAction(event: Event): Promise<void> {
 }
 
 function renderQueueRow(item: QueueItem): string {
+  const controls: string[] = [];
+
+  if (item.status === 'queued' || item.status === 'retryable' || item.status === 'running') {
+    controls.push(
+      `<button type="button" class="danger" data-action="cancel" data-id="${escapeHtml(item.id)}">Cancel</button>`,
+    );
+  }
+
+  if (item.status === 'failed' || item.status === 'canceled' || item.status === 'succeeded') {
+    controls.push(
+      `<button type="button" class="secondary" data-action="retry" data-id="${escapeHtml(item.id)}">Retry</button>`,
+    );
+  }
+
+  if (item.status === 'running') {
+    controls.push(
+      `<button type="button" class="warn" data-action="timeout" data-id="${escapeHtml(item.id)}">Force Timeout</button>`,
+    );
+  }
+
+  const actionCell = controls.length > 0 ? controls.join(' ') : '<span class="muted">None</span>';
+
   return `
     <tr>
       <td><code>${escapeHtml(short(item.id))}</code></td>
@@ -373,6 +454,7 @@ function renderQueueRow(item: QueueItem): string {
       <td>${escapeHtml(item.type)}</td>
       <td>${item.attempts}/${item.maxAttempts}</td>
       <td>${escapeHtml(item.resultStatus ?? item.lastError ?? '-')}</td>
+      <td>${actionCell}</td>
     </tr>
   `;
 }
@@ -419,13 +501,19 @@ function renderScheduleRow(item: ScheduleItem): string {
 }
 
 async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    ...(init.headers as Record<string, string> | undefined),
+  };
+
+  if (state.apiKey) {
+    headers['X-API-Key'] = state.apiKey;
+  }
+
   const response = await fetch(`${state.baseUrl}${path}`, {
     ...init,
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      ...(init.headers ?? {}),
-    },
+    headers,
   });
 
   const raw = await response.text();

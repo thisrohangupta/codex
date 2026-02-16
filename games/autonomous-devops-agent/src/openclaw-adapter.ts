@@ -1,10 +1,17 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { FileApprovalStore } from './approvals.js';
-import { readRuntimeConfig, type AgentRuntimeConfig } from './config.js';
-import { FileRunQueue } from './queue.js';
-import { FileScheduleStore, type RunSchedule, validateCron } from './schedule.js';
+import type {
+  AdapterAuthRuntimeConfig,
+  AdapterRole,
+  AgentRuntimeConfig,
+} from './config.js';
+import { readRuntimeConfig } from './config.js';
+import type { QueueBackoffConfig, QueueItemStatus, RunQueueApi } from './queue.js';
+import type { RunSchedule, ScheduleStoreApi } from './schedule.js';
+import { validateCron } from './schedule.js';
 import { createAgentRuntime, type AgentRuntime } from './runtime.js';
+import { createRuntimeStores } from './stores.js';
 import type { AgentContext } from './types.js';
+import type { ApprovalStatus, ApprovalStoreApi } from './approvals.js';
 
 interface RuntimeState {
   runtime: AgentRuntime;
@@ -13,43 +20,63 @@ interface RuntimeState {
 
 interface AdapterState {
   runtimeState: RuntimeState;
-  queue: FileRunQueue;
-  approvals: FileApprovalStore;
-  schedules: FileScheduleStore;
+  queue: RunQueueApi;
+  approvals: ApprovalStoreApi;
+  schedules: ScheduleStoreApi;
   asyncMode: boolean;
   maxAttempts: number;
+  queueBackoff: QueueBackoffConfig;
+  auth: AdapterAuthRuntimeConfig;
+}
+
+interface AuthPrincipal {
+  id: string;
+  roles: AdapterRole[];
+}
+
+class HttpError extends Error {
+  constructor(readonly statusCode: number, message: string) {
+    super(message);
+  }
 }
 
 async function main(): Promise<void> {
-  let state = initializeState(readRuntimeConfig());
-
-  const host = process.env.ADAPTER_HOST ?? '127.0.0.1';
-  const port = Number(process.env.ADAPTER_PORT ?? '8790');
+  let config = readRuntimeConfig();
+  let state = initializeState(config);
 
   const server = createServer(async (req, res) => {
     try {
       await handleRequest(req, res, {
         getState: () => state,
         reload: () => {
-          state = initializeState(readRuntimeConfig());
+          config = readRuntimeConfig();
+          state = initializeState(config);
           return state;
         },
       });
     } catch (error) {
+      if (error instanceof HttpError) {
+        writeJson(res, error.statusCode, { error: error.message });
+        return;
+      }
       writeJson(res, 500, { error: formatError(error) });
     }
   });
 
-  server.listen(port, host, () => {
+  server.listen(config.adapter.port, config.adapter.host, () => {
     process.stdout.write(
-      `OpenClaw adapter listening on http://${host}:${port} (mode=${state.runtimeState.runtime.config.mode} asyncMode=${state.asyncMode})\n`,
+      `OpenClaw adapter listening on http://${config.adapter.host}:${config.adapter.port} (mode=${state.runtimeState.runtime.config.mode} asyncMode=${state.asyncMode})\n`,
     );
     if (state.runtimeState.warning) {
       process.stdout.write(`warning=${state.runtimeState.warning}\n`);
     }
+    process.stdout.write(`storage=${state.runtimeState.runtime.config.storage.driver}\n`);
     process.stdout.write(`queue=${state.runtimeState.runtime.config.queue.storePath}\n`);
     process.stdout.write(`approvals=${state.runtimeState.runtime.config.policy.approvalStorePath}\n`);
     process.stdout.write(`schedules=${state.runtimeState.runtime.config.schedule.storePath}\n`);
+    process.stdout.write(
+      `auth=${state.auth.mode}${state.auth.mode === 'api-key' ? ` keys=${state.auth.keys.length}` : ''}\n`,
+    );
   });
 }
 
@@ -66,6 +93,7 @@ async function handleRequest(
   const method = req.method ?? 'GET';
   const url = new URL(req.url ?? '/', 'http://localhost');
   const path = normalizePath(url.pathname);
+  const state = context.getState();
 
   if (method === 'OPTIONS') {
     writePreflight(res);
@@ -73,7 +101,10 @@ async function handleRequest(
   }
 
   if (method === 'GET' && path === '/health') {
-    const state = context.getState();
+    if (!state.auth.allowPublicHealth) {
+      authorizeRequest(req, state.auth, 'viewer', method, path);
+    }
+
     writeJson(res, 200, {
       ok: true,
       mode: state.runtimeState.runtime.config.mode,
@@ -85,7 +116,7 @@ async function handleRequest(
   }
 
   if (method === 'GET' && path === '/runtime') {
-    const state = context.getState();
+    authorizeRequest(req, state.auth, 'viewer', method, path);
     writeJson(res, 200, {
       describe: state.runtimeState.runtime.describe(),
       warning: state.runtimeState.warning,
@@ -95,18 +126,19 @@ async function handleRequest(
   }
 
   if (method === 'POST' && path === '/runtime/reload') {
-    const state = context.reload();
+    authorizeRequest(req, state.auth, 'admin', method, path);
+    const nextState = context.reload();
     writeJson(res, 200, {
       reloaded: true,
-      describe: state.runtimeState.runtime.describe(),
-      warning: state.runtimeState.warning,
-      asyncMode: state.asyncMode,
+      describe: nextState.runtimeState.runtime.describe(),
+      warning: nextState.runtimeState.warning,
+      asyncMode: nextState.asyncMode,
     });
     return;
   }
 
   if (method === 'GET' && path === '/events') {
-    const state = context.getState();
+    authorizeRequest(req, state.auth, 'viewer', method, path);
     writeJson(res, 200, {
       count: state.runtimeState.runtime.eventBus.list().length,
       events: state.runtimeState.runtime.eventBus.list(),
@@ -115,27 +147,16 @@ async function handleRequest(
   }
 
   if (method === 'GET' && path === '/queue') {
-    const state = context.getState();
-    const filter = asString(url.searchParams.get('status') ?? undefined);
-    const items = state.queue.list().filter((item) => (filter ? item.status === filter : true));
+    authorizeRequest(req, state.auth, 'viewer', method, path);
+    const filterValue = asString(url.searchParams.get('status') ?? undefined);
+    const filter = isQueueStatus(filterValue) ? filterValue : undefined;
+    const items = (await state.queue.list()).filter((item) => (filter ? item.status === filter : true));
     writeJson(res, 200, { count: items.length, items });
     return;
   }
 
-  if (method === 'GET' && path.startsWith('/queue/')) {
-    const state = context.getState();
-    const itemId = decodeURIComponent(path.slice('/queue/'.length));
-    const item = state.queue.get(itemId);
-    if (!item) {
-      writeJson(res, 404, { error: `queue item not found: ${itemId}` });
-      return;
-    }
-    writeJson(res, 200, item);
-    return;
-  }
-
   if (method === 'POST' && path === '/queue/jira') {
-    const state = context.getState();
+    authorizeRequest(req, state.auth, 'operator', method, path);
     const body = await readJsonBody(req);
     const issueId = asString(body.issueId);
     if (!issueId) {
@@ -143,7 +164,7 @@ async function handleRequest(
       return;
     }
 
-    const item = state.queue.enqueueJira(issueId, {
+    const item = await state.queue.enqueueJira(issueId, {
       maxAttempts: toPositiveInteger(body.maxAttempts) ?? state.maxAttempts,
       serviceNowRecordId: asString(body.serviceNowRecordId),
       approvalOverride: asBoolean(body.approvalOverride),
@@ -155,7 +176,7 @@ async function handleRequest(
   }
 
   if (method === 'POST' && path === '/queue/pr') {
-    const state = context.getState();
+    authorizeRequest(req, state.auth, 'operator', method, path);
     const body = await readJsonBody(req);
     const repo = asString(body.repo);
     const prNumber = asString(body.prNumber);
@@ -165,7 +186,7 @@ async function handleRequest(
       return;
     }
 
-    const item = state.queue.enqueuePullRequest(repo, prNumber, {
+    const item = await state.queue.enqueuePullRequest(repo, prNumber, {
       maxAttempts: toPositiveInteger(body.maxAttempts) ?? state.maxAttempts,
       serviceNowRecordId: asString(body.serviceNowRecordId),
       approvalOverride: asBoolean(body.approvalOverride),
@@ -176,10 +197,72 @@ async function handleRequest(
     return;
   }
 
+  if (method === 'POST' && path === '/queue/reap') {
+    authorizeRequest(req, state.auth, 'admin', method, path);
+    const items = await state.queue.reapExpiredRunning({
+      now: new Date(),
+      backoff: state.queueBackoff,
+    });
+    writeJson(res, 200, {
+      reaped: items.length,
+      items,
+    });
+    return;
+  }
+
+  if (method === 'POST' && path.startsWith('/queue/') && path.endsWith('/cancel')) {
+    const principal = authorizeRequest(req, state.auth, 'operator', method, path);
+    const itemId = decodeURIComponent(path.slice('/queue/'.length, -'/cancel'.length));
+    const body = await readJsonBody(req);
+    const reason = asString(body.reason) ?? `canceled by ${principal.id}`;
+    const item = await state.queue.cancel(itemId, reason);
+    writeJson(res, 200, {
+      canceled: true,
+      item,
+    });
+    return;
+  }
+
+  if (method === 'POST' && path.startsWith('/queue/') && path.endsWith('/retry')) {
+    authorizeRequest(req, state.auth, 'operator', method, path);
+    const itemId = decodeURIComponent(path.slice('/queue/'.length, -'/retry'.length));
+    const item = await state.queue.retry(itemId);
+    writeJson(res, 200, {
+      retried: true,
+      item,
+    });
+    return;
+  }
+
+  if (method === 'POST' && path.startsWith('/queue/') && path.endsWith('/timeout')) {
+    const principal = authorizeRequest(req, state.auth, 'operator', method, path);
+    const itemId = decodeURIComponent(path.slice('/queue/'.length, -'/timeout'.length));
+    const body = await readJsonBody(req);
+    const reason = asString(body.reason) ?? `force-timeout by ${principal.id}`;
+    const item = await state.queue.forceTimeout(itemId, reason, state.queueBackoff);
+    writeJson(res, 200, {
+      timedOut: true,
+      item,
+    });
+    return;
+  }
+
+  if (method === 'GET' && path.startsWith('/queue/')) {
+    authorizeRequest(req, state.auth, 'viewer', method, path);
+    const itemId = decodeURIComponent(path.slice('/queue/'.length));
+    const item = await state.queue.get(itemId);
+    if (!item) {
+      writeJson(res, 404, { error: `queue item not found: ${itemId}` });
+      return;
+    }
+    writeJson(res, 200, item);
+    return;
+  }
+
   if (method === 'GET' && path === '/approvals') {
-    const state = context.getState();
+    authorizeRequest(req, state.auth, 'viewer', method, path);
     const status = asString(url.searchParams.get('status') ?? undefined);
-    const approvals = state.approvals.list(isApprovalStatus(status) ? status : undefined);
+    const approvals = await state.approvals.list(isApprovalStatus(status) ? status : undefined);
     writeJson(res, 200, {
       count: approvals.length,
       approvals,
@@ -188,11 +271,11 @@ async function handleRequest(
   }
 
   if (method === 'GET' && path.startsWith('/approvals/')) {
-    const state = context.getState();
+    authorizeRequest(req, state.auth, 'viewer', method, path);
     const approvalId = decodeURIComponent(path.slice('/approvals/'.length));
 
     if (!approvalId.includes('/')) {
-      const approval = state.approvals.get(approvalId);
+      const approval = await state.approvals.get(approvalId);
       if (!approval) {
         writeJson(res, 404, { error: `approval not found: ${approvalId}` });
         return;
@@ -203,16 +286,16 @@ async function handleRequest(
   }
 
   if (method === 'POST' && path.startsWith('/approvals/') && path.endsWith('/approve')) {
-    const state = context.getState();
+    const principal = authorizeRequest(req, state.auth, 'approver', method, path);
     const approvalId = decodeURIComponent(path.slice('/approvals/'.length, -'/approve'.length));
-    const approval = state.approvals.get(approvalId);
+    const approval = await state.approvals.get(approvalId);
     if (!approval) {
       writeJson(res, 404, { error: `approval not found: ${approvalId}` });
       return;
     }
 
     const body = await readJsonBody(req);
-    const approvedBy = asString(body.approvedBy);
+    const approvedBy = asString(body.approvedBy) ?? principal.id;
     const serviceNowRecordId = asString(body.serviceNowRecordId) ?? approval.serviceNowRecordId;
     const maxAttempts = toPositiveInteger(body.maxAttempts) ?? state.maxAttempts;
 
@@ -222,7 +305,7 @@ async function handleRequest(
         writeJson(res, 400, { error: `approval ${approval.id} is missing issueId` });
         return;
       }
-      queuedItem = state.queue.enqueueJira(approval.issueId, {
+      queuedItem = await state.queue.enqueueJira(approval.issueId, {
         maxAttempts,
         serviceNowRecordId,
         approvalOverride: true,
@@ -233,7 +316,7 @@ async function handleRequest(
         writeJson(res, 400, { error: `approval ${approval.id} is missing repo/prNumber` });
         return;
       }
-      queuedItem = state.queue.enqueuePullRequest(approval.repo, approval.prNumber, {
+      queuedItem = await state.queue.enqueuePullRequest(approval.repo, approval.prNumber, {
         maxAttempts,
         serviceNowRecordId,
         approvalOverride: true,
@@ -241,7 +324,7 @@ async function handleRequest(
       });
     }
 
-    const updated = state.approvals.markApproved(approval.id, {
+    const updated = await state.approvals.markApproved(approval.id, {
       approvedBy,
       queuedRunId: queuedItem.id,
     });
@@ -255,17 +338,17 @@ async function handleRequest(
   }
 
   if (method === 'POST' && path.startsWith('/approvals/') && path.endsWith('/reject')) {
-    const state = context.getState();
+    const principal = authorizeRequest(req, state.auth, 'approver', method, path);
     const approvalId = decodeURIComponent(path.slice('/approvals/'.length, -'/reject'.length));
-    const approval = state.approvals.get(approvalId);
+    const approval = await state.approvals.get(approvalId);
     if (!approval) {
       writeJson(res, 404, { error: `approval not found: ${approvalId}` });
       return;
     }
 
     const body = await readJsonBody(req);
-    const updated = state.approvals.markRejected(approval.id, {
-      rejectedBy: asString(body.rejectedBy),
+    const updated = await state.approvals.markRejected(approval.id, {
+      rejectedBy: asString(body.rejectedBy) ?? principal.id,
       reason: asString(body.reason),
     });
 
@@ -277,19 +360,20 @@ async function handleRequest(
   }
 
   if (method === 'GET' && path === '/schedules') {
-    const state = context.getState();
+    authorizeRequest(req, state.auth, 'viewer', method, path);
+    const schedules = await state.schedules.list();
     writeJson(res, 200, {
-      count: state.schedules.list().length,
-      schedules: state.schedules.list(),
+      count: schedules.length,
+      schedules,
     });
     return;
   }
 
   if (method === 'GET' && path.startsWith('/schedules/')) {
-    const state = context.getState();
+    authorizeRequest(req, state.auth, 'viewer', method, path);
     const scheduleId = decodeURIComponent(path.slice('/schedules/'.length));
     if (!scheduleId.includes('/')) {
-      const schedule = state.schedules.get(scheduleId);
+      const schedule = await state.schedules.get(scheduleId);
       if (!schedule) {
         writeJson(res, 404, { error: `schedule not found: ${scheduleId}` });
         return;
@@ -300,7 +384,7 @@ async function handleRequest(
   }
 
   if (method === 'POST' && path === '/schedules') {
-    const state = context.getState();
+    authorizeRequest(req, state.auth, 'operator', method, path);
     const body = await readJsonBody(req);
     const name = asString(body.name) ?? 'Unnamed schedule';
     const cron = asString(body.cron);
@@ -315,7 +399,7 @@ async function handleRequest(
 
     const schedule =
       type === 'jira'
-        ? state.schedules.create({
+        ? await state.schedules.create({
             name,
             cron,
             enabled: body.enabled === undefined ? true : asBoolean(body.enabled),
@@ -326,7 +410,7 @@ async function handleRequest(
               maxAttempts: toPositiveInteger(body.maxAttempts),
             },
           })
-        : state.schedules.create({
+        : await state.schedules.create({
             name,
             cron,
             enabled: body.enabled === undefined ? true : asBoolean(body.enabled),
@@ -344,7 +428,7 @@ async function handleRequest(
   }
 
   if (method === 'PATCH' && path.startsWith('/schedules/')) {
-    const state = context.getState();
+    authorizeRequest(req, state.auth, 'operator', method, path);
     const scheduleId = decodeURIComponent(path.slice('/schedules/'.length));
     if (scheduleId.includes('/')) {
       // handled by other routes
@@ -395,17 +479,17 @@ async function handleRequest(
         }
       }
 
-      const updated = state.schedules.update(scheduleId, patch);
+      const updated = await state.schedules.update(scheduleId, patch);
       writeJson(res, 200, updated);
       return;
     }
   }
 
   if (method === 'DELETE' && path.startsWith('/schedules/')) {
-    const state = context.getState();
+    authorizeRequest(req, state.auth, 'operator', method, path);
     const scheduleId = decodeURIComponent(path.slice('/schedules/'.length));
     if (!scheduleId.includes('/')) {
-      const deleted = state.schedules.delete(scheduleId);
+      const deleted = await state.schedules.delete(scheduleId);
       if (!deleted) {
         writeJson(res, 404, { error: `schedule not found: ${scheduleId}` });
         return;
@@ -416,15 +500,15 @@ async function handleRequest(
   }
 
   if (method === 'POST' && path.startsWith('/schedules/') && path.endsWith('/run-now')) {
-    const state = context.getState();
+    authorizeRequest(req, state.auth, 'operator', method, path);
     const scheduleId = decodeURIComponent(path.slice('/schedules/'.length, -'/run-now'.length));
-    const schedule = state.schedules.get(scheduleId);
+    const schedule = await state.schedules.get(scheduleId);
     if (!schedule) {
       writeJson(res, 404, { error: `schedule not found: ${scheduleId}` });
       return;
     }
 
-    const queuedItem = enqueueFromSchedule(schedule, state);
+    const queuedItem = await enqueueFromSchedule(schedule, state);
     writeJson(res, 202, {
       queued: true,
       scheduleId,
@@ -434,6 +518,7 @@ async function handleRequest(
   }
 
   if (method === 'POST' && path === '/runs/jira') {
+    authorizeRequest(req, state.auth, 'operator', method, path);
     const body = await readJsonBody(req);
     const issueId = asString(body.issueId);
     if (!issueId) {
@@ -441,9 +526,8 @@ async function handleRequest(
       return;
     }
 
-    const state = context.getState();
     if (state.asyncMode) {
-      const item = state.queue.enqueueJira(issueId, {
+      const item = await state.queue.enqueueJira(issueId, {
         maxAttempts: state.maxAttempts,
         serviceNowRecordId: asString(body.serviceNowRecordId),
       });
@@ -461,6 +545,7 @@ async function handleRequest(
   }
 
   if (method === 'POST' && path === '/probe/jira') {
+    authorizeRequest(req, state.auth, 'operator', method, path);
     const body = await readJsonBody(req);
     const issueId = asString(body.issueId);
     if (!issueId) {
@@ -468,7 +553,6 @@ async function handleRequest(
       return;
     }
 
-    const state = context.getState();
     const result = await state.runtimeState.runtime.probeTargetsFromJira(issueId, {
       serviceNowRecordId: asString(body.serviceNowRecordId),
     });
@@ -478,6 +562,7 @@ async function handleRequest(
   }
 
   if (method === 'POST' && path === '/runs/pr') {
+    authorizeRequest(req, state.auth, 'operator', method, path);
     const body = await readJsonBody(req);
     const repo = asString(body.repo);
     const prNumber = asString(body.prNumber);
@@ -487,9 +572,8 @@ async function handleRequest(
       return;
     }
 
-    const state = context.getState();
     if (state.asyncMode) {
-      const item = state.queue.enqueuePullRequest(repo, prNumber, {
+      const item = await state.queue.enqueuePullRequest(repo, prNumber, {
         maxAttempts: state.maxAttempts,
         serviceNowRecordId: asString(body.serviceNowRecordId),
       });
@@ -507,6 +591,7 @@ async function handleRequest(
   }
 
   if (method === 'POST' && path === '/probe/pr') {
+    authorizeRequest(req, state.auth, 'operator', method, path);
     const body = await readJsonBody(req);
     const repo = asString(body.repo);
     const prNumber = asString(body.prNumber);
@@ -515,7 +600,6 @@ async function handleRequest(
       return;
     }
 
-    const state = context.getState();
     const result = await state.runtimeState.runtime.probeTargetsFromPullRequest(repo, prNumber, {
       serviceNowRecordId: asString(body.serviceNowRecordId),
     });
@@ -524,6 +608,7 @@ async function handleRequest(
     return;
   }
 
+  authorizeRequest(req, state.auth, 'viewer', method, path);
   writeJson(res, 404, {
     error: 'not_found',
     route: `${method} ${path}`,
@@ -536,6 +621,10 @@ async function handleRequest(
       'GET /queue/{id}',
       'POST /queue/jira',
       'POST /queue/pr',
+      'POST /queue/{id}/cancel',
+      'POST /queue/{id}/retry',
+      'POST /queue/{id}/timeout',
+      'POST /queue/reap',
       'GET /approvals',
       'GET /approvals/{id}',
       'POST /approvals/{id}/approve',
@@ -568,13 +657,26 @@ function summarizeRun(context: AgentContext): Record<string, unknown> {
 }
 
 function initializeState(config: AgentRuntimeConfig): AdapterState {
+  if (config.adapter.auth.mode === 'api-key' && config.adapter.auth.keys.length === 0) {
+    throw new Error(
+      'Adapter auth is enabled but no API keys are configured. Set ADAPTER_API_KEY, ADAPTER_AUTH_KEYS, or ADAPTER_AUTH_KEYS_JSON.',
+    );
+  }
+
+  const stores = createRuntimeStores(config);
+
   return {
     runtimeState: initializeRuntime(config),
-    queue: new FileRunQueue(config.queue.storePath),
-    approvals: new FileApprovalStore(config.policy.approvalStorePath),
-    schedules: new FileScheduleStore(config.schedule.storePath),
-    asyncMode: parseBoolean(process.env.ADAPTER_ASYNC_QUEUE),
+    queue: stores.queue,
+    approvals: stores.approvals,
+    schedules: stores.schedules,
+    asyncMode: config.adapter.asyncQueue,
     maxAttempts: config.queue.maxAttempts,
+    queueBackoff: {
+      initialBackoffMs: config.queue.initialBackoffMs,
+      maxBackoffMs: config.queue.maxBackoffMs,
+    },
+    auth: config.adapter.auth,
   };
 }
 
@@ -611,7 +713,78 @@ function writePreflight(res: ServerResponse): void {
 function setCorsHeaders(res: ServerResponse): void {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+}
+
+function authorizeRequest(
+  req: IncomingMessage,
+  authConfig: AdapterAuthRuntimeConfig,
+  requiredRole: AdapterRole,
+  method: string,
+  path: string,
+): AuthPrincipal {
+  if (authConfig.mode !== 'api-key') {
+    return {
+      id: 'anonymous',
+      roles: ['admin'],
+    };
+  }
+
+  const apiKey = extractApiKey(req);
+  if (!apiKey) {
+    throw new HttpError(401, `API key required for ${method} ${path}`);
+  }
+
+  const key = authConfig.keys.find((item) => item.key === apiKey);
+  if (!key) {
+    throw new HttpError(401, 'Invalid API key');
+  }
+
+  if (!hasRole(key.roles, requiredRole)) {
+    throw new HttpError(403, `API key '${key.id}' does not have required role '${requiredRole}'`);
+  }
+
+  return {
+    id: key.id,
+    roles: key.roles,
+  };
+}
+
+function extractApiKey(req: IncomingMessage): string | undefined {
+  const rawApiKey = req.headers['x-api-key'];
+  if (typeof rawApiKey === 'string' && rawApiKey.trim()) {
+    return rawApiKey.trim();
+  }
+
+  const authorization = req.headers.authorization;
+  if (typeof authorization === 'string' && authorization.trim()) {
+    const match = /^bearer\s+(.+)$/i.exec(authorization.trim());
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+
+  return undefined;
+}
+
+function hasRole(roles: AdapterRole[], requiredRole: AdapterRole): boolean {
+  if (roles.includes('admin')) {
+    return true;
+  }
+
+  if (requiredRole === 'viewer') {
+    return roles.includes('viewer') || roles.includes('operator') || roles.includes('approver');
+  }
+
+  if (requiredRole === 'operator') {
+    return roles.includes('operator');
+  }
+
+  if (requiredRole === 'approver') {
+    return roles.includes('approver');
+  }
+
+  return false;
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -637,7 +810,7 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
   }
 }
 
-function enqueueFromSchedule(schedule: RunSchedule, state: AdapterState) {
+async function enqueueFromSchedule(schedule: RunSchedule, state: AdapterState) {
   if (schedule.target.type === 'jira') {
     if (!schedule.target.issueId) {
       throw new Error(`Schedule ${schedule.id} missing issueId`);
@@ -699,8 +872,17 @@ function parseBoolean(value: string | undefined): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 }
 
-function isApprovalStatus(value: string | undefined): value is 'pending' | 'approved' | 'rejected' {
+function isApprovalStatus(value: string | undefined): value is ApprovalStatus {
   return value === 'pending' || value === 'approved' || value === 'rejected';
+}
+
+function isQueueStatus(value: string | undefined): value is QueueItemStatus {
+  return value === 'queued' ||
+    value === 'running' ||
+    value === 'retryable' ||
+    value === 'succeeded' ||
+    value === 'failed' ||
+    value === 'canceled';
 }
 
 function formatError(error: unknown): string {

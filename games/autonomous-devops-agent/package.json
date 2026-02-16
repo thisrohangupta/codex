@@ -15,7 +15,10 @@
     "fmt": "prettier src tests --write",
     "test": "tsc --project tsconfig.json && node dist/tests/run.js"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@types/pg": "^8.16.0",
+    "pg": "^8.18.0"
+  },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@typescript-eslint/eslint-plugin": "^7.0.0",

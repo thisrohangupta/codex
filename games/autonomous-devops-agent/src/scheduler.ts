@@ -1,6 +1,5 @@
 import { readRuntimeConfig } from './config.js';
-import { FileRunQueue } from './queue.js';
-import { FileScheduleStore } from './schedule.js';
+import { createRuntimeStores } from './stores.js';
 
 async function main(): Promise<void> {
   let shouldStop = false;
@@ -13,15 +12,16 @@ async function main(): Promise<void> {
   });
 
   const config = readRuntimeConfig();
-  const queue = new FileRunQueue(config.queue.storePath);
-  const schedules = new FileScheduleStore(config.schedule.storePath);
+  const stores = createRuntimeStores(config);
+  const queue = stores.queue;
+  const schedules = stores.schedules;
 
   process.stdout.write(
-    `Scheduler started. schedules=${config.schedule.storePath} queue=${config.queue.storePath} poll=${config.schedule.pollIntervalMs}ms\n`,
+    `Scheduler started. driver=${config.storage.driver} schedules=${config.schedule.storePath} queue=${config.queue.storePath} poll=${config.schedule.pollIntervalMs}ms\n`,
   );
 
   while (!shouldStop) {
-    const dueSchedules = schedules.claimDue(new Date());
+    const dueSchedules = await schedules.claimDue(new Date());
 
     for (const schedule of dueSchedules) {
       try {
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
             throw new Error(`Schedule ${schedule.id} missing issueId`);
           }
 
-          queue.enqueueJira(issueId, {
+          await queue.enqueueJira(issueId, {
             maxAttempts: schedule.target.maxAttempts ?? config.queue.maxAttempts,
             serviceNowRecordId: schedule.target.serviceNowRecordId,
           });
@@ -42,7 +42,7 @@ async function main(): Promise<void> {
             throw new Error(`Schedule ${schedule.id} missing repo/prNumber`);
           }
 
-          queue.enqueuePullRequest(repo, prNumber, {
+          await queue.enqueuePullRequest(repo, prNumber, {
             maxAttempts: schedule.target.maxAttempts ?? config.queue.maxAttempts,
             serviceNowRecordId: schedule.target.serviceNowRecordId,
           });
