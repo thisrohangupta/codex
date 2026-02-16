@@ -32,6 +32,9 @@ npm run test
 - Event streaming for task/run lifecycle
 - Real API integrations for Jira, GitHub, Harness, ServiceNow
 - Optional local command execution for build/test/deploy/validate against Kubernetes
+- Durable run queue + autonomous worker loop (OpenClaw-style behavior without OpenClaw install)
+- Cron-based scheduled runs (Jira or PR targets) via scheduler daemon
+- Policy gates for production deployment (`auto` vs `approval`)
 
 ### Quick start (dry-run)
 
@@ -84,6 +87,111 @@ Flow:
 4. Access token is exchanged and saved to `OAUTH_TOKEN_STORE_PATH` (default: `.agent/oauth-tokens.json`).
 
 Live mode automatically reuses stored OAuth tokens for subsequent Jira/GitHub API calls.
+
+### OpenClaw integration path
+
+Run this agent as an OpenClaw-invokable REST worker:
+
+```bash
+cd games/autonomous-devops-agent
+npm run adapter
+```
+
+Adapter routes:
+
+- `GET /health`
+- `GET /runtime`
+- `POST /runtime/reload`
+- `GET /events`
+- `GET /queue`
+- `GET /queue/{id}`
+- `POST /queue/jira`
+- `POST /queue/pr`
+- `GET /approvals`
+- `GET /approvals/{id}`
+- `POST /approvals/{id}/approve`
+- `POST /approvals/{id}/reject`
+- `GET /schedules`
+- `GET /schedules/{id}`
+- `POST /schedules`
+- `PATCH /schedules/{id}`
+- `DELETE /schedules/{id}`
+- `POST /schedules/{id}/run-now`
+- `POST /runs/jira` with `{ "issueId": "DEV-123", "serviceNowRecordId": "INC0012345" }`
+- `POST /runs/pr` with `{ "repo": "owner/repo", "prNumber": "42" }`
+
+If `ADAPTER_ASYNC_QUEUE=true`, `POST /runs/*` also enqueue and return `202`.
+
+### Standalone autonomous mode (no OpenClaw required)
+
+Run adapter, worker, and scheduler in separate terminals:
+
+```bash
+cd games/autonomous-devops-agent
+npm run adapter
+```
+
+```bash
+cd games/autonomous-devops-agent
+npm run worker
+```
+
+```bash
+cd games/autonomous-devops-agent
+npm run scheduler
+```
+
+Queue a Jira run:
+
+```bash
+curl -X POST http://127.0.0.1:8790/queue/jira \\
+  -H 'content-type: application/json' \\
+  -d '{"issueId":"DEV-123","serviceNowRecordId":"INC0012345"}'
+```
+
+Inspect queue:
+
+```bash
+curl http://127.0.0.1:8790/queue
+```
+
+Create a cron schedule (every 30 minutes):
+
+```bash
+curl -X POST http://127.0.0.1:8790/schedules \
+  -H 'content-type: application/json' \
+  -d '{"name":"sync-dev-123","cron":"*/30 * * * *","type":"jira","issueId":"DEV-123"}'
+```
+
+Inspect schedules and approvals:
+
+```bash
+curl http://127.0.0.1:8790/schedules
+curl http://127.0.0.1:8790/approvals
+```
+
+### Policy gates (auto vs human approval)
+
+Set in `.env`:
+
+- `DEPLOYMENT_POLICY_MODE=auto` to automatically continue to prod after checks
+- `DEPLOYMENT_POLICY_MODE=approval` to pause before prod and require human approval
+
+When policy mode is `approval`, run outcomes become `needs_review` with note
+`Manual approval required for production deployment`. Approve and re-queue:
+
+```bash
+curl -X POST http://127.0.0.1:8790/approvals/<approval-id>/approve \
+  -H 'content-type: application/json' \
+  -d '{"approvedBy":"architect"}'
+```
+
+### Optional OpenClaw bridge
+
+If you install OpenClaw, use `channel-rest` to route into this adapter.
+
+- Starter template: `/Users/rohangupta/code/codex/games/autonomous-devops-agent/examples/openclaw-channel-rest.template.yaml`
+- Adjust field names to your OpenClaw version/schema.
 
 ### Triggering build, test, deploy, and Kubernetes validation
 

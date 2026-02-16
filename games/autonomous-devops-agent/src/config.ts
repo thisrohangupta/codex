@@ -1,4 +1,5 @@
 import type { ApiKeyConfig } from './types.js';
+import type { DeploymentPolicyMode } from './policy.js';
 
 export type RuntimeMode = 'dry-run' | 'live';
 
@@ -58,6 +59,24 @@ export interface ExecutionRuntimeConfig {
   validateProdCommand: string;
 }
 
+export interface QueueRuntimeConfig {
+  storePath: string;
+  pollIntervalMs: number;
+  maxAttempts: number;
+  initialBackoffMs: number;
+  maxBackoffMs: number;
+}
+
+export interface PolicyRuntimeConfig {
+  mode: DeploymentPolicyMode;
+  approvalStorePath: string;
+}
+
+export interface ScheduleRuntimeConfig {
+  storePath: string;
+  pollIntervalMs: number;
+}
+
 export interface AgentRuntimeConfig {
   mode: RuntimeMode;
   defaultRepo: string;
@@ -68,6 +87,9 @@ export interface AgentRuntimeConfig {
   serviceNow: ServiceNowRuntimeConfig;
   oauth: OAuthRuntimeConfig;
   execution: ExecutionRuntimeConfig;
+  queue: QueueRuntimeConfig;
+  policy: PolicyRuntimeConfig;
+  schedule: ScheduleRuntimeConfig;
   llm: ApiKeyConfig;
 }
 
@@ -145,6 +167,21 @@ export function readRuntimeConfig(
         env.VALIDATE_PROD_COMMAND ??
         'kubectl rollout status deployment/${K8S_DEPLOYMENT:-app} -n ${K8S_PROD_NAMESPACE:-prod} --timeout=180s',
     },
+    queue: {
+      storePath: env.QUEUE_STORE_PATH ?? '.agent/run-queue.json',
+      pollIntervalMs: parseInteger(env.QUEUE_POLL_INTERVAL_MS, 2000),
+      maxAttempts: parseInteger(env.QUEUE_MAX_ATTEMPTS, 3),
+      initialBackoffMs: parseInteger(env.QUEUE_INITIAL_BACKOFF_MS, 2000),
+      maxBackoffMs: parseInteger(env.QUEUE_MAX_BACKOFF_MS, 60000),
+    },
+    policy: {
+      mode: asPolicyMode(env.DEPLOYMENT_POLICY_MODE),
+      approvalStorePath: env.APPROVAL_STORE_PATH ?? '.agent/approvals.json',
+    },
+    schedule: {
+      storePath: env.SCHEDULE_STORE_PATH ?? '.agent/schedules.json',
+      pollIntervalMs: parseInteger(env.SCHEDULE_POLL_INTERVAL_MS, 30000),
+    },
     llm: {
       provider: asProvider(env.LLM_PROVIDER),
       apiKey: env.LLM_API_KEY,
@@ -216,6 +253,9 @@ export function describeRuntimeConfig(config: AgentRuntimeConfig): string[] {
   lines.push(`oauth.github=${hasGithubOAuth ? 'configured' : 'not configured'}`);
   lines.push(`oauth.jira=${hasJiraOAuth ? 'configured' : 'not configured'}`);
   lines.push(`executor=${config.execution.enabled ? `enabled (${config.execution.workdir})` : 'disabled'}`);
+  lines.push(`queue=${config.queue.storePath} (poll=${config.queue.pollIntervalMs}ms)`);
+  lines.push(`policy=${config.policy.mode} (approvals=${config.policy.approvalStorePath})`);
+  lines.push(`schedule=${config.schedule.storePath} (poll=${config.schedule.pollIntervalMs}ms)`);
 
   lines.push(`llm=${config.llm.provider}${config.llm.model ? ` (${config.llm.model})` : ''}`);
   return lines;
@@ -246,4 +286,24 @@ function parseBoolean(value: string | undefined): boolean {
 
   const normalized = value.trim().toLowerCase();
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function parseInteger(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
+function asPolicyMode(value: string | undefined): DeploymentPolicyMode {
+  if (value === 'approval') {
+    return 'approval';
+  }
+  return 'auto';
 }

@@ -14,6 +14,7 @@ import {
 } from './integrations.js';
 import { createLlmProvider } from './llm.js';
 import { hasValidToken, readOAuthTokenStore } from './oauth.js';
+import { createDeploymentPolicy } from './policy.js';
 import type { AgentContext, WorkItem } from './types.js';
 
 export interface AgentRuntime {
@@ -27,6 +28,8 @@ export interface AgentRuntime {
 
 export interface RunOptions {
   serviceNowRecordId?: string;
+  approvalOverride?: boolean;
+  approvalRequestId?: string;
 }
 
 class DefaultAgentRuntime implements AgentRuntime {
@@ -46,9 +49,7 @@ class DefaultAgentRuntime implements AgentRuntime {
         ? await this.deps.jira.fetchWorkItem(issueId)
         : this.createDryRunJiraItem(issueId);
 
-    if (options?.serviceNowRecordId) {
-      workItem.serviceNowRecordId = options.serviceNowRecordId;
-    }
+    this.applyRunOptions(workItem, options);
 
     return this.agent.run(workItem);
   }
@@ -59,9 +60,7 @@ class DefaultAgentRuntime implements AgentRuntime {
         ? await this.deps.repo.fetchPullRequestWorkItem(repo, prNumber)
         : this.createDryRunPullRequestItem(repo, prNumber);
 
-    if (options?.serviceNowRecordId) {
-      workItem.serviceNowRecordId = options.serviceNowRecordId;
-    }
+    this.applyRunOptions(workItem, options);
 
     return this.agent.run(workItem);
   }
@@ -93,6 +92,24 @@ class DefaultAgentRuntime implements AgentRuntime {
       serviceNowRecordId: this.config.serviceNow.defaultRecordId,
     };
   }
+
+  private applyRunOptions(workItem: WorkItem, options?: RunOptions): void {
+    if (!options) {
+      return;
+    }
+
+    if (options.serviceNowRecordId) {
+      workItem.serviceNowRecordId = options.serviceNowRecordId;
+    }
+
+    if (options.approvalOverride || options.approvalRequestId) {
+      workItem.metadata = {
+        ...(workItem.metadata ?? {}),
+        ...(options.approvalOverride ? { approvalOverride: 'true' } : {}),
+        ...(options.approvalRequestId ? { approvalRequestId: options.approvalRequestId } : {}),
+      };
+    }
+  }
 }
 
 export function createAgentRuntime(
@@ -106,6 +123,7 @@ export function createAgentRuntime(
 
   const eventBus = new EventBus();
   const executor = createExecutor(effectiveConfig);
+  const deploymentPolicy = createDeploymentPolicy(effectiveConfig.policy.mode);
 
   if (effectiveConfig.mode === 'live') {
     const serviceNow = hasServiceNowConfig(effectiveConfig)
@@ -146,6 +164,7 @@ export function createAgentRuntime(
       llm: createLlmProvider(effectiveConfig.llm),
       serviceNow,
       executor,
+      deploymentPolicy,
       eventBus,
     };
 
@@ -169,6 +188,7 @@ export function createAgentRuntime(
     llm: createLlmProvider({ provider: 'oss' }),
     serviceNow: new InMemoryServiceNowApi(),
     executor,
+    deploymentPolicy,
     eventBus,
   });
 }

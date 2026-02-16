@@ -9,6 +9,8 @@ import type {
   WorkItem,
 } from './types.js';
 import type { AgentContext, AgentEvent, RunStatus } from './types.js';
+import type { DeploymentPolicy } from './policy.js';
+import { MANUAL_APPROVAL_NOTE } from './policy.js';
 
 export interface DevOpsAgentDependencies {
   jira: JiraApi;
@@ -17,6 +19,7 @@ export interface DevOpsAgentDependencies {
   llm: LlmProvider;
   serviceNow?: ServiceNowApi;
   executor?: DeliveryExecutor;
+  deploymentPolicy?: DeploymentPolicy;
   eventBus?: EventBus;
 }
 
@@ -132,28 +135,40 @@ export class DevOpsAgent {
     });
 
     if (context.reviewNotes.length === 0) {
-      await this.executeTask(context, 'deploy-prod', async () => {
-        const deployment = await this.deps.harness.deploy('prod', context.artifact ?? '');
-        context.deployments.push(deployment);
-      });
+      const requiresApproval = this.deps.deploymentPolicy?.requiresManualApproval(input, context) ?? false;
 
-      if (executor) {
-        await this.executeTask(context, 'deploy-prod-local', async () => {
-          const output = await executor.deployToCluster('prod', context);
-          context.clusterValidationReport = [context.clusterValidationReport, output]
-            .filter(Boolean)
-            .join('\n');
+      if (requiresApproval) {
+        context.reviewNotes.push(MANUAL_APPROVAL_NOTE);
+        this.updateStatus(context, 'needs_review');
+        this.eventBus.emit(
+          this.createEvent(context, 'review.requested', {
+            reason: MANUAL_APPROVAL_NOTE,
+          }),
+        );
+      } else {
+        await this.executeTask(context, 'deploy-prod', async () => {
+          const deployment = await this.deps.harness.deploy('prod', context.artifact ?? '');
+          context.deployments.push(deployment);
         });
 
-        await this.executeTask(context, 'validate-prod-local', async () => {
-          const output = await executor.validateCluster('prod', context);
-          context.clusterValidationReport = [context.clusterValidationReport, output]
-            .filter(Boolean)
-            .join('\n');
-        });
+        if (executor) {
+          await this.executeTask(context, 'deploy-prod-local', async () => {
+            const output = await executor.deployToCluster('prod', context);
+            context.clusterValidationReport = [context.clusterValidationReport, output]
+              .filter(Boolean)
+              .join('\n');
+          });
+
+          await this.executeTask(context, 'validate-prod-local', async () => {
+            const output = await executor.validateCluster('prod', context);
+            context.clusterValidationReport = [context.clusterValidationReport, output]
+              .filter(Boolean)
+              .join('\n');
+          });
+        }
+
+        this.updateStatus(context, 'succeeded');
       }
-
-      this.updateStatus(context, 'succeeded');
     } else {
       this.updateStatus(context, 'needs_review');
       this.eventBus.emit(

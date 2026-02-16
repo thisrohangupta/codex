@@ -1,0 +1,41 @@
+# OpenClaw channel-rest template for autonomous-devops-agent
+#
+# NOTE:
+# - Field names may vary slightly across OpenClaw versions.
+# - Treat this as a starter mapping and align to your installed OpenClaw schema.
+
+channel_rest:
+  enabled: true
+  api_key: ${OPENCLAW_REST_API_KEY}
+
+  routes:
+    - name: devops_jira_run
+      method: POST
+      path: /devops/runs/jira
+      target_url: http://127.0.0.1:8790/queue/jira
+      headers:
+        content-type: application/json
+      body_template:
+        issueId: "{{json.issueId}}"
+        serviceNowRecordId: "{{json.serviceNowRecordId}}"
+
+    - name: devops_pr_run
+      method: POST
+      path: /devops/runs/pr
+      target_url: http://127.0.0.1:8790/queue/pr
+      headers:
+        content-type: application/json
+      body_template:
+        repo: "{{json.repo}}"
+        prNumber: "{{json.prNumber}}"
+        serviceNowRecordId: "{{json.serviceNowRecordId}}"
+
+    - name: devops_queue_status
+      method: GET
+      path: /devops/queue
+      target_url: http://127.0.0.1:8790/queue
+
+    - name: devops_health
+      method: GET
+      path: /devops/health
+      target_url: http://127.0.0.1:8790/health

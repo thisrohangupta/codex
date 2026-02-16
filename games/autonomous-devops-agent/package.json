@@ -8,6 +8,9 @@
     "build": "vite build",
     "preview": "vite preview --port 5174",
     "chat": "tsc --project tsconfig.json && node dist/src/cli.js",
+    "adapter": "tsc --project tsconfig.json && node dist/src/openclaw-adapter.js",
+    "worker": "tsc --project tsconfig.json && node dist/src/worker.js",
+    "scheduler": "tsc --project tsconfig.json && node dist/src/scheduler.js",
     "lint": "tsc --noEmit",
     "fmt": "prettier src tests --write",
     "test": "tsc --project tsconfig.json && node dist/tests/run.js"

@@ -5,6 +5,7 @@ import { createLlmProvider } from './llm.js';
 import type { WorkItem } from './types.js';
 
 export * from './agent.js';
+export * from './approvals.js';
 export * from './chat.js';
 export * from './config.js';
 export * from './executor.js';
@@ -12,7 +13,10 @@ export * from './event-bus.js';
 export * from './integrations.js';
 export * from './llm.js';
 export * from './oauth.js';
+export * from './policy.js';
+export * from './queue.js';
 export * from './runtime.js';
+export * from './schedule.js';
 export * from './tasks.js';
 export * from './types.js';
 

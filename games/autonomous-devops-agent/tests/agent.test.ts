@@ -2,6 +2,7 @@ import { DevOpsAgent } from '../src/agent.js';
 import { EventBus } from '../src/event-bus.js';
 import { InMemoryJiraApi, InMemoryRepoApi } from '../src/integrations.js';
 import { createLlmProvider } from '../src/llm.js';
+import { MANUAL_APPROVAL_NOTE, createDeploymentPolicy } from '../src/policy.js';
 import type { DeploymentResult, HarnessApi, SecurityScanResult, WorkItem } from '../src/types.js';
 import { assertEqual, assertRejects, assertTrue } from './test-helpers.js';
 
@@ -43,6 +44,7 @@ class StubHarnessApi implements HarnessApi {
 export async function runAgentTests(): Promise<void> {
   await testSuccessPath();
   await testReviewPath();
+  await testManualApprovalPolicyPath();
   await testFailurePath();
 }
 
@@ -115,4 +117,30 @@ async function testFailurePath(): Promise<void> {
     'Generated code failed baseline tests',
     'baseline test gate should fail invalid generation output',
   );
+}
+
+async function testManualApprovalPolicyPath(): Promise<void> {
+  const agent = new DevOpsAgent({
+    jira: new InMemoryJiraApi({ [workItem.id]: workItem }),
+    repo: new InMemoryRepoApi(),
+    harness: new StubHarnessApi({ critical: 0, high: 0, medium: 0, low: 0 }),
+    llm: createLlmProvider({ provider: 'oss' }),
+    deploymentPolicy: createDeploymentPolicy('approval'),
+    eventBus: new EventBus(),
+  });
+
+  const gated = await agent.run(workItem);
+  assertEqual(gated.status, 'needs_review', 'approval policy should gate production deployment');
+  assertEqual(gated.deployments.length, 1, 'approval policy should stop after dev deployment');
+  assertTrue(
+    gated.reviewNotes.includes(MANUAL_APPROVAL_NOTE),
+    'approval policy should add manual approval review note',
+  );
+
+  const override = await agent.run({
+    ...workItem,
+    metadata: { ...(workItem.metadata ?? {}), approvalOverride: 'true' },
+  });
+  assertEqual(override.status, 'succeeded', 'approval override should allow production deployment');
+  assertEqual(override.deployments.length, 2, 'approval override should deploy to prod');
 }

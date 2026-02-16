@@ -56,6 +56,15 @@ export class InMemoryRepoApi implements RepoApi {
 }
 
 export class InMemoryHarnessApi implements HarnessApi {
+  constructor(
+    private readonly scanResult: SecurityScanResult = {
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+    },
+  ) {}
+
   async publishArtifact(repo: string, buildOutput: string): Promise<string> {
     if (!buildOutput) {
       throw new Error('Cannot publish empty build output');
@@ -74,14 +83,8 @@ export class InMemoryHarnessApi implements HarnessApi {
     };
   }
 
-  async scanImage(artifact: string): Promise<SecurityScanResult> {
-    const code = Math.abs(hashCode(artifact));
-    return {
-      critical: code % 2,
-      high: code % 3,
-      medium: code % 5,
-      low: code % 7,
-    };
+  async scanImage(_artifact: string): Promise<SecurityScanResult> {
+    return { ...this.scanResult };
   }
 }
 
